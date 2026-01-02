@@ -69,14 +69,14 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     res.json({ status: 'ok', version: '1.0.0' });
   });
 
-  // List available plugins
+  // List available plugins (with full block definitions for client registration)
   app.get('/api/plugins', (_req, res) => {
     const available = discoverPlugins();
     const loaded = getServerPlugins().map(p => ({
       name: p.name,
       version: p.version,
       description: p.description,
-      blockCount: p.blocks.length,
+      blocks: p.blocks, // Include full block definitions
     }));
     res.json({
       directory: getPluginsDirectory(),

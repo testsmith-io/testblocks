@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import * as Blockly from 'blockly';
-import { TestFile, TestCase, TestResult, VariableDefinition, TestStep, ProcedureDefinition } from '../core';
+import { TestFile, TestCase, TestResult, VariableDefinition, TestStep, ProcedureDefinition, BlockDefinition } from '../core';
 import { BlocklyWorkspace } from './components/BlocklyWorkspace';
 import { StepResultItem } from './components/StepResultItem';
 import { FileTree, FileNode } from './components/FileTree';
@@ -10,6 +10,7 @@ import { workspaceToTestSteps } from './blockly/blockDefinitions';
 import { exportCustomBlocksAsProcedures, loadCustomBlocksFromProcedures, clearCustomBlocks } from './blockly/customBlockCreator';
 import { applyMatchToTestFile, BlockMatch } from './blockly/blockMatcher';
 import { CreateBlockResult } from './components/CreateBlockDialog';
+import { loadPlugin } from './plugins/pluginLoader';
 
 // IndexedDB helpers for storing directory handles
 const DB_NAME = 'testblocks-storage';
@@ -84,6 +85,7 @@ interface AppState {
   sidebarTab: 'files' | 'tests';
   showHelpDialog: boolean;
   showRecordDialog: boolean;
+  pluginsLoaded: boolean;
 }
 
 const initialTestFile: TestFile = {
@@ -224,6 +226,7 @@ export default function App() {
     sidebarTab: 'files',
     showHelpDialog: false,
     showRecordDialog: false,
+    pluginsLoaded: false,
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -283,6 +286,39 @@ export default function App() {
 
     tryRestoreLastFolder();
   }, [openDirectoryFromHandle]);
+
+  // Fetch and register plugins from server on startup
+  useEffect(() => {
+    const fetchPlugins = async () => {
+      try {
+        const response = await fetch('/api/plugins');
+        if (!response.ok) {
+          console.warn('Failed to fetch plugins from server');
+          setState(prev => ({ ...prev, pluginsLoaded: true }));
+          return;
+        }
+        const data = await response.json();
+        if (data.loaded && Array.isArray(data.loaded)) {
+          for (const plugin of data.loaded) {
+            if (plugin.blocks && Array.isArray(plugin.blocks)) {
+              loadPlugin({
+                name: plugin.name,
+                version: plugin.version,
+                description: plugin.description,
+                blocks: plugin.blocks as BlockDefinition[],
+              });
+            }
+          }
+          console.log(`Loaded ${data.loaded.length} plugin(s) from server`);
+        }
+      } catch (err) {
+        console.warn('Could not fetch plugins from server:', (err as Error).message);
+      }
+      setState(prev => ({ ...prev, pluginsLoaded: true }));
+    };
+
+    fetchPlugins();
+  }, []);
 
   // Re-open last folder (triggered by user click)
   const handleReopenLastFolder = useCallback(async () => {
@@ -1570,7 +1606,7 @@ export default function App() {
           </div>
           <div className="blockly-container">
             <BlocklyWorkspace
-              key={`${state.editorTab}-${state.editorTab === 'test' ? selectedTest?.id : 'lifecycle'}-${state.selectedFilePath}`}
+              key={`${state.editorTab}-${state.editorTab === 'test' ? selectedTest?.id : 'lifecycle'}-${state.selectedFilePath}-${state.pluginsLoaded}`}
               onWorkspaceChange={handleWorkspaceChange}
               onReplaceMatches={handleReplaceMatches}
               initialSteps={getCurrentSteps()}
