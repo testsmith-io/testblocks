@@ -7,6 +7,7 @@ import { glob } from 'glob';
 import { TestFile, TestResult } from '../core';
 import { TestExecutor, ExecutorOptions } from './executor';
 import { ConsoleReporter, JUnitReporter, JSONReporter, HTMLReporter, Reporter } from './reporters';
+import { startServer } from '../server/startServer';
 
 const program = new Command();
 
@@ -223,7 +224,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-          testblocks: '^1.0.0',
+          testblocks: '^0.3.0',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -338,7 +339,8 @@ Thumbs.db
     console.log('  1. cd ' + (directory === '.' ? '' : directory));
     console.log('  2. npm install');
     console.log('  3. npm test\n');
-    console.log('Or open the folder in TestBlocks web editor to create tests visually.\n');
+    console.log('To open the visual test editor:');
+    console.log('  testblocks serve\n');
   });
 
 program
@@ -373,6 +375,26 @@ program
       console.error('Error:', (error as Error).message);
       process.exit(1);
     }
+  });
+
+program
+  .command('serve')
+  .description('Start the TestBlocks web UI')
+  .option('-p, --port <port>', 'Port to run on', '3000')
+  .option('--plugins-dir <dir>', 'Plugins directory', './plugins')
+  .option('--globals-dir <dir>', 'Globals directory (where globals.json is located)', '.')
+  .option('-o, --open', 'Open browser automatically', false)
+  .action(async (options) => {
+    const port = parseInt(options.port, 10);
+    const pluginsDir = path.resolve(options.pluginsDir);
+    const globalsDir = path.resolve(options.globalsDir);
+
+    await startServer({
+      port,
+      pluginsDir,
+      globalsDir,
+      open: options.open,
+    });
   });
 
 function createReporter(type: string, outputDir: string): Reporter {
