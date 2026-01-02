@@ -1,6 +1,6 @@
 {
   "name": "testblocks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Visual test automation tool with Blockly - API and Playwright testing",
   "author": "Roy de Kleijn",
   "license": "MIT",
@@ -65,7 +65,7 @@
     "@blockly/field-multilineinput": "^6.0.5",
     "@faker-js/faker": "^10.1.0",
     "@playwright/test": "^1.57.0",
-    "blockly": "^11.1.0",
+    "blockly": "^12.0.0",
     "commander": "^12.1.0",
     "cors": "^2.8.5",
     "express": "^4.21.2",
