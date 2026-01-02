@@ -3,27 +3,23 @@
  *
  * This file provides utilities for loading and initializing plugins.
  * Plugins are not bundled with the core package - they should be
- * provided by users or loaded from the examples folder.
+ * registered by users via registerClientPlugin().
  *
  * Example usage:
  * ```typescript
  * import { registerClientPlugin, initializePlugins } from './plugins/initPlugins';
- * import { fakerPlugin } from '../../examples/plugins/faker-plugin';
+ * import { myPlugin } from './my-plugin';
  *
- * registerClientPlugin(fakerPlugin);
+ * registerClientPlugin(myPlugin);
  * initializePlugins();
  * ```
  */
 
 import { loadPlugins } from './pluginLoader';
 import { Plugin } from '../../core';
-import { fakerPlugin } from '../../../examples/plugins/faker-plugin';
-import { totpPlugin } from '../../../examples/plugins/totp-plugin';
-import { mathPlugin } from '../../../examples/plugins/math-plugin';
-import { databasePlugin } from '../../../examples/plugins/database-plugin';
 
-// List of registered plugins - pre-register all example plugins
-const registeredPlugins: Plugin[] = [fakerPlugin, totpPlugin, mathPlugin, databasePlugin];
+// List of registered plugins - starts empty, plugins are registered dynamically
+const registeredPlugins: Plugin[] = [];
 
 /**
  * Register a plugin for client-side use
