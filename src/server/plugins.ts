@@ -13,8 +13,16 @@ import { createJiti } from 'jiti';
 import { registerPlugin, Plugin } from '../core';
 
 // Create jiti instance for loading TypeScript plugins at runtime
+// Configure it to resolve modules from the user's working directory
 const jiti = createJiti(__filename, {
   interopDefault: true,
+  moduleCache: false,
+  alias: {
+    // Allow plugins to import from 'testblocks' even if they use old relative paths
+    '../../src/core': path.join(__dirname, '..', 'core'),
+    '../src/core': path.join(__dirname, '..', 'core'),
+    './src/core': path.join(__dirname, '..', 'core'),
+  },
 });
 
 // Track initialization
