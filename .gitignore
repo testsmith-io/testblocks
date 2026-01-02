@@ -24,7 +24,6 @@ testblocks-results/
 # Package manager
 /.pnp
 .pnp.js
-package-lock.json
 
 # OS
 .DS_Store
