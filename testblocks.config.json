@@ -1,0 +1,14 @@
+{
+  "$schema": "./packages/core/dist/config-schema.json",
+  "testDir": "./tests",
+  "testMatch": ["**/*.testblocks.json"],
+  "timeout": 30000,
+  "headless": true,
+  "reporter": "console",
+  "outputDir": "./testblocks-results",
+  "variables": {
+    "baseUrl": "http://localhost:3000",
+    "apiUrl": "http://localhost:3001/api"
+  },
+  "plugins": []
+}
