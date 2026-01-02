@@ -24,9 +24,20 @@
     "url": "https://github.com/testsmith-io/testblocks/issues"
   },
   "homepage": "https://github.com/testsmith-io/testblocks",
-  "main": "dist/cli/index.js",
+  "main": "dist/core/index.js",
+  "types": "dist/core/index.d.ts",
   "bin": {
     "testblocks": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "default": "./dist/cli/index.js"
+    }
   },
   "files": [
     "dist",
