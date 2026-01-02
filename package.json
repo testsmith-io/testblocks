@@ -1,6 +1,6 @@
 {
   "name": "testblocks",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Visual test automation tool with Blockly - API and Playwright testing",
   "author": "Roy de Kleijn",
   "license": "MIT",
@@ -70,6 +70,7 @@
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "glob": "^11.0.0",
+    "jiti": "^2.6.1",
     "jsonpath-plus": "^10.3.0",
     "otpauth": "^9.4.1",
     "playwright": "^1.49.1",
@@ -79,7 +80,6 @@
     "xpath": "^0.0.34"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^2.1.8",
     "@eslint/js": "^9.39.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
@@ -90,6 +90,7 @@
     "@typescript-eslint/eslint-plugin": "^8.51.0",
     "@typescript-eslint/parser": "^8.51.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^2.1.8",
     "concurrently": "^8.2.2",
     "eslint": "^9.39.2",
     "eslint-plugin-react": "^7.37.5",

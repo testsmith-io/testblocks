@@ -9,7 +9,13 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createJiti } from 'jiti';
 import { registerPlugin, Plugin } from '../core';
+
+// Create jiti instance for loading TypeScript plugins at runtime
+const jiti = createJiti(__filename, {
+  interopDefault: true,
+});
 
 // Track initialization
 let pluginsInitialized = false;
@@ -104,11 +110,12 @@ export async function loadPlugin(pluginName: string): Promise<Plugin | null> {
   const tsPath = path.join(pluginsDirectory, `${pluginName}.ts`);
 
   let pluginPath: string | null = null;
+  let isTypeScript = false;
   if (fs.existsSync(jsPath)) {
     pluginPath = jsPath;
   } else if (fs.existsSync(tsPath)) {
-    // For TypeScript files, require ts-node or esbuild-register
     pluginPath = tsPath;
+    isTypeScript = true;
   }
 
   if (!pluginPath) {
@@ -119,8 +126,13 @@ export async function loadPlugin(pluginName: string): Promise<Plugin | null> {
   try {
     console.log(`Loading plugin: ${pluginName} from ${pluginPath}`);
 
-    // Dynamic import
-    const module = await import(pluginPath);
+    // Use jiti for TypeScript files, dynamic import for JavaScript
+    let module: Record<string, unknown>;
+    if (isTypeScript) {
+      module = jiti(pluginPath) as Record<string, unknown>;
+    } else {
+      module = await import(pluginPath);
+    }
 
     // Look for default export or named export matching plugin name
     const plugin = module.default ||
