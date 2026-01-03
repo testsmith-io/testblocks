@@ -1,6 +1,6 @@
 {
-  "name": "testblocks",
-  "version": "0.6.0",
+  "name": "@testsmith/testblocks",
+  "version": "0.1.0",
   "description": "Visual test automation tool with Blockly - API and Playwright testing",
   "author": "Roy de Kleijn",
   "license": "MIT",
