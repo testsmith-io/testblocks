@@ -4,6 +4,7 @@ import { BlockMatch, findMatchingSequences, groupMatchesByFile } from '../blockl
 import { TestStep } from '../../core';
 import { EditBlockCanvas } from './EditBlockCanvas';
 import { FileNode } from './FileTree';
+import { toast } from './Toast';
 
 export interface CreateBlockResult {
   config: CustomBlockConfig;
@@ -145,12 +146,12 @@ export function CreateBlockDialog({
 
   const handleCreate = useCallback(() => {
     if (!name.trim()) {
-      alert('Please enter a block name');
+      toast.warning('Please enter a block name');
       return;
     }
 
     if (editableSteps.length === 0) {
-      alert('Please add at least one step to the block');
+      toast.warning('Please add at least one step to the block');
       return;
     }
 

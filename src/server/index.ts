@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
-import { TestFile, TestResult } from '../core';
+import { TestFile, TestResult, FolderHooks } from '../core';
 import { TestExecutor } from './executor';
 import { generateHTMLReport, generateJUnitXML, getTimestamp, ReportData } from '../cli/reporters';
 import {
@@ -41,6 +41,61 @@ loadAllPlugins().then(() => {
 }).catch(err => {
   console.error('Failed to load plugins:', err);
 });
+
+/**
+ * Merge folder hooks into a test file.
+ * Folder hooks are ordered from outermost to innermost folder.
+ * - beforeAll: run parent hooks first, then child hooks, then test file hooks
+ * - afterAll: run test file hooks first, then child hooks, then parent hooks
+ * - beforeEach/afterEach: same pattern
+ */
+function mergeFolderHooksIntoTestFile(testFile: TestFile, folderHooks: FolderHooks[]): TestFile {
+  if (!folderHooks || folderHooks.length === 0) {
+    return testFile;
+  }
+
+  // Collect all steps from folder hooks (parent to child order is already provided)
+  const beforeAllSteps: unknown[] = [];
+  const afterAllSteps: unknown[] = [];
+  const beforeEachSteps: unknown[] = [];
+  const afterEachSteps: unknown[] = [];
+
+  // Parent to child order for beforeAll/beforeEach
+  for (const hooks of folderHooks) {
+    if (hooks.beforeAll) beforeAllSteps.push(...hooks.beforeAll);
+    if (hooks.beforeEach) beforeEachSteps.push(...hooks.beforeEach);
+  }
+
+  // Child to parent order for afterAll/afterEach
+  for (let i = folderHooks.length - 1; i >= 0; i--) {
+    const hooks = folderHooks[i];
+    if (hooks.afterAll) afterAllSteps.unshift(...hooks.afterAll);
+    if (hooks.afterEach) afterEachSteps.unshift(...hooks.afterEach);
+  }
+
+  // Merge with test file hooks
+  const merged: TestFile = {
+    ...testFile,
+    beforeAll: [
+      ...beforeAllSteps,
+      ...(testFile.beforeAll || []),
+    ] as TestFile['beforeAll'],
+    afterAll: [
+      ...(testFile.afterAll || []),
+      ...afterAllSteps,
+    ] as TestFile['afterAll'],
+    beforeEach: [
+      ...beforeEachSteps,
+      ...(testFile.beforeEach || []),
+    ] as TestFile['beforeEach'],
+    afterEach: [
+      ...(testFile.afterEach || []),
+      ...afterEachSteps,
+    ] as TestFile['afterEach'],
+  };
+
+  return merged;
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -111,13 +166,16 @@ app.put('/api/globals/test-id-attribute', (req, res) => {
 // Run tests
 app.post('/api/run', async (req, res) => {
   try {
-    const testFile = req.body as TestFile;
+    const { testFile, folderHooks } = req.body as { testFile: TestFile; folderHooks?: FolderHooks[] };
 
     if (!testFile || !testFile.tests) {
       return res.status(400).json({ error: 'Invalid test file format' });
     }
 
     console.log(`Running ${testFile.tests.length} tests from "${testFile.name}"...`);
+
+    // Merge folder hooks into test file (parent to child order for beforeAll, child to parent for afterAll)
+    const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
     // Merge global variables with test file variables
     const globalVars = getGlobalVariables();
@@ -131,7 +189,7 @@ app.post('/api/run', async (req, res) => {
       baseDir: globalsDir, // Base directory for resolving relative file paths
     });
 
-    const results = await executor.runTestFile(testFile);
+    const results = await executor.runTestFile(mergedTestFile);
 
     const passed = results.filter(r => r.status === 'passed').length;
     const failed = results.filter(r => r.status === 'failed').length;
@@ -153,7 +211,7 @@ app.post('/api/run', async (req, res) => {
 // Run a single test
 app.post('/api/run/:testId', async (req, res) => {
   try {
-    const testFile = req.body as TestFile;
+    const { testFile, folderHooks } = req.body as { testFile: TestFile; folderHooks?: FolderHooks[] };
     const { testId } = req.params;
 
     const test = testFile.tests.find(t => t.id === testId);
@@ -161,6 +219,10 @@ app.post('/api/run/:testId', async (req, res) => {
     if (!test) {
       return res.status(404).json({ error: `Test not found: ${testId}` });
     }
+
+    // For single test runs, merge folder beforeEach/afterEach hooks
+    // (beforeAll/afterAll are handled at suite level)
+    const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
     // Merge global variables
     const globalVars = getGlobalVariables();
@@ -175,12 +237,12 @@ app.post('/api/run/:testId', async (req, res) => {
     });
 
     // Register custom blocks from procedures before running the test
-    if (testFile.procedures) {
-      executor.registerProcedures(testFile.procedures);
+    if (mergedTestFile.procedures) {
+      executor.registerProcedures(mergedTestFile.procedures);
     }
 
     await executor.initialize();
-    const result = await executor.runTest(test, testFile.variables);
+    const result = await executor.runTest(test, mergedTestFile.variables);
     await executor.cleanup();
 
     res.json(result);

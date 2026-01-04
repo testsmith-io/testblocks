@@ -8,6 +8,7 @@ import { JsonEditorModal } from './JsonEditorModal';
 import { FileNode } from './FileTree';
 import { getPluginBlocks, initializePlugins } from '../plugins';
 import { loadSnippetsFromServer, getSnippetBlocks } from '../snippets';
+import { toast } from './Toast';
 
 // Block types that have JSON body fields
 const JSON_BODY_BLOCKS = ['api_post', 'api_put', 'api_patch', 'api_set_headers', 'api_json_body'];
@@ -406,7 +407,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
           const { steps, suggestedParams } = analyzeSelectedBlocks(selectedBlocks);
 
           if (steps.length === 0) {
-            alert('No valid blocks selected');
+            toast.warning('No valid blocks selected');
             return;
           }
 
@@ -456,7 +457,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
           const config = getCustomBlockConfig(blockType);
 
           if (!config) {
-            alert('Could not find block configuration');
+            toast.error('Could not find block configuration');
             return;
           }
 

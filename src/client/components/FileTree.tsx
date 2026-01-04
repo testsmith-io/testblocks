@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TestFile } from '../../core';
+import { TestFile, FolderHooks } from '../../core';
 
 export interface FileNode {
   name: string;
@@ -8,12 +8,16 @@ export interface FileNode {
   children?: FileNode[];
   testFile?: TestFile;
   handle?: FileSystemFileHandle;
+  folderHandle?: FileSystemDirectoryHandle;
+  folderHooks?: FolderHooks;
+  hooksFileHandle?: FileSystemFileHandle;
 }
 
 interface FileTreeProps {
   root: FileNode | null;
   selectedPath: string | null;
   onSelectFile: (node: FileNode) => void;
+  onSelectFolder?: (node: FileNode) => void;
   onRefresh?: () => void;
 }
 
@@ -22,9 +26,10 @@ interface FileTreeNodeProps {
   depth: number;
   selectedPath: string | null;
   onSelectFile: (node: FileNode) => void;
+  onSelectFolder?: (node: FileNode) => void;
 }
 
-function FileTreeNode({ node, depth, selectedPath, onSelectFile }: FileTreeNodeProps) {
+function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder }: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const isSelected = node.path === selectedPath;
   const isFolder = node.type === 'folder';
@@ -35,6 +40,13 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile }: FileTreeNodeP
       setIsExpanded(!isExpanded);
     } else {
       onSelectFile(node);
+    }
+  };
+
+  const handleFolderSettings = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onSelectFolder) {
+      onSelectFolder(node);
     }
   };
 
@@ -52,6 +64,18 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile }: FileTreeNodeP
         {node.testFile && (
           <span className="file-tree-badge">{node.testFile.tests.length}</span>
         )}
+        {isFolder && onSelectFolder && (
+          <button
+            className="folder-hooks-btn"
+            onClick={handleFolderSettings}
+            title="Configure folder hooks"
+          >
+            ⚙
+          </button>
+        )}
+        {isFolder && node.folderHooks && (
+          <span className="folder-hooks-indicator" title="Folder has hooks configured">⟳</span>
+        )}
       </div>
       {isFolder && isExpanded && hasChildren && (
         <div className="file-tree-children">
@@ -62,6 +86,7 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile }: FileTreeNodeP
               depth={depth + 1}
               selectedPath={selectedPath}
               onSelectFile={onSelectFile}
+              onSelectFolder={onSelectFolder}
             />
           ))}
         </div>
@@ -70,7 +95,7 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile }: FileTreeNodeP
   );
 }
 
-export function FileTree({ root, selectedPath, onSelectFile, onRefresh }: FileTreeProps) {
+export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh }: FileTreeProps) {
   if (!root) {
     return (
       <div className="file-tree-empty">
@@ -99,6 +124,7 @@ export function FileTree({ root, selectedPath, onSelectFile, onRefresh }: FileTr
               depth={0}
               selectedPath={selectedPath}
               onSelectFile={onSelectFile}
+              onSelectFolder={onSelectFolder}
             />
           ))
         ) : (

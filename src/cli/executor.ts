@@ -64,10 +64,39 @@ export class TestExecutor {
     this.browser = null;
   }
 
+  private requiresBrowser(testFile: TestFile): boolean {
+    const hasWebStep = (steps: TestStep[]): boolean => {
+      return steps.some(step => step.type.startsWith('web_'));
+    };
+
+    const hasWebStepInState = (state: unknown): boolean => {
+      const steps = this.extractStepsFromBlocklyState(state);
+      return hasWebStep(steps);
+    };
+
+    // Check beforeAll/afterAll hooks
+    if (testFile.beforeAll && hasWebStepInState(testFile.beforeAll)) return true;
+    if (testFile.afterAll && hasWebStepInState(testFile.afterAll)) return true;
+    if (testFile.beforeEach && hasWebStepInState(testFile.beforeEach)) return true;
+    if (testFile.afterEach && hasWebStepInState(testFile.afterEach)) return true;
+
+    // Check all tests
+    for (const test of testFile.tests) {
+      if (hasWebStepInState(test.steps)) return true;
+      if (test.beforeEach && hasWebStepInState(test.beforeEach)) return true;
+      if (test.afterEach && hasWebStepInState(test.afterEach)) return true;
+    }
+
+    return false;
+  }
+
   async runTestFile(testFile: TestFile): Promise<TestResult[]> {
     const results: TestResult[] = [];
 
-    await this.initialize();
+    // Only initialize browser if test file contains web steps
+    if (this.requiresBrowser(testFile)) {
+      await this.initialize();
+    }
 
     // Register procedures from the test file
     if (testFile.procedures) {

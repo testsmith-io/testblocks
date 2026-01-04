@@ -1,3 +1,12 @@
+// Folder-level hooks that apply to all tests in a folder
+export interface FolderHooks {
+  version: string;
+  beforeAll?: TestStep[];
+  afterAll?: TestStep[];
+  beforeEach?: TestStep[];
+  afterEach?: TestStep[];
+}
+
 // Test file schema - this is what gets saved to disk and stored in repos
 export interface TestFile {
   version: string;

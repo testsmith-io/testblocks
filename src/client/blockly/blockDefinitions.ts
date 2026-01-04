@@ -2,6 +2,10 @@ import * as Blockly from 'blockly';
 import { FieldMultilineInput } from '@blockly/field-multilineinput';
 import { BlockDefinition } from '../../core';
 
+// Import and register custom fields
+import './FieldTextInputWithAutocomplete';
+import './FieldMultilineWithAutocomplete';
+
 // Register the multiline input field
 Blockly.fieldRegistry.register('field_multilineinput', FieldMultilineInput);
 
@@ -99,9 +103,10 @@ function createFieldArg(input: BlockDefinition['inputs'][0], _index: number): un
 
   switch (input.fieldType) {
     case 'text':
+      // Use autocomplete field for text inputs to enable variable suggestions
       return {
         ...baseArg,
-        type: 'field_input',
+        type: 'field_input_autocomplete',
         text: input.default !== undefined ? String(input.default) : '',
       };
     case 'number':
@@ -123,16 +128,18 @@ function createFieldArg(input: BlockDefinition['inputs'][0], _index: number): un
         checked: input.default === true,
       };
     case 'multiline':
+      // Use autocomplete field for multiline inputs
       return {
         ...baseArg,
-        type: 'field_multilineinput',
+        type: 'field_multiline_autocomplete',
         text: input.default !== undefined ? String(input.default) : '',
         spellcheck: false,
       };
     default:
+      // Default to autocomplete field
       return {
         ...baseArg,
-        type: 'field_input',
+        type: 'field_input_autocomplete',
         text: '',
       };
   }

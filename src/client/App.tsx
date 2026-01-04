@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import * as Blockly from 'blockly';
-import { TestFile, TestCase, TestResult, VariableDefinition, TestStep, ProcedureDefinition, BlockDefinition } from '../core';
+import { TestFile, TestCase, TestResult, VariableDefinition, TestStep, ProcedureDefinition, BlockDefinition, FolderHooks } from '../core';
 import { BlocklyWorkspace } from './components/BlocklyWorkspace';
 import { StepResultItem } from './components/StepResultItem';
 import { FileTree, FileNode } from './components/FileTree';
@@ -11,6 +11,14 @@ import { exportCustomBlocksAsProcedures, loadCustomBlocksFromProcedures, clearCu
 import { applyMatchToTestFile, BlockMatch } from './blockly/blockMatcher';
 import { CreateBlockResult } from './components/CreateBlockDialog';
 import { loadPlugin } from './plugins/pluginLoader';
+import {
+  setGlobalVariables,
+  setFileVariables,
+  setEditingMode,
+  setDataColumns,
+} from './blockly/variableContext';
+import { ToastContainer, useToast, toast } from './components/Toast';
+import { VariablesEditor, recordToVariables, variablesToRecord } from './components/VariablesEditor';
 
 // IndexedDB helpers for storing directory handles
 const DB_NAME = 'testblocks-storage';
@@ -74,6 +82,9 @@ interface AppState {
   // Current file state
   testFile: TestFile;
   selectedTestIndex: number;
+  // Folder hooks editing
+  editingFolderHooks: FileNode | null; // When set, we're editing folder hooks instead of a test file
+  folderHooks: FolderHooks; // Current folder hooks being edited
   // UI state
   results: TestResult[];
   isRunning: boolean;
@@ -86,6 +97,9 @@ interface AppState {
   showHelpDialog: boolean;
   showRecordDialog: boolean;
   pluginsLoaded: boolean;
+  autoSaveStatus: 'idle' | 'saving' | 'saved';
+  resultsPanelCollapsed: boolean;
+  sidebarCollapsed: boolean;
 }
 
 const initialTestFile: TestFile = {
@@ -114,6 +128,7 @@ async function scanDirectory(
     path: path || dirHandle.name,
     type: 'folder',
     children: [],
+    folderHandle: dirHandle,
   };
 
   const entries: { name: string; kind: 'file' | 'directory'; handle: FileSystemHandle }[] = [];
@@ -138,6 +153,18 @@ async function scanDirectory(
       // Only include folders that have test files in them
       if (subDir.children && subDir.children.length > 0) {
         node.children!.push(subDir);
+      }
+    } else if (entry.name === '_hooks.testblocks.json') {
+      // Load folder hooks
+      try {
+        const fileHandle = entry.handle as FileSystemFileHandle;
+        const file = await fileHandle.getFile();
+        const content = await file.text();
+        const hooks = JSON.parse(content) as FolderHooks;
+        node.folderHooks = hooks;
+        node.hooksFileHandle = fileHandle;
+      } catch (e) {
+        console.warn(`Skipping invalid hooks file: ${entry.name}`, e);
       }
     } else if (entry.name.endsWith('.testblocks.json') || entry.name.endsWith('.json')) {
       try {
@@ -208,6 +235,8 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 export default function App() {
+  const { toasts, dismissToast } = useToast();
+
   const [state, setState] = useState<AppState>({
     projectRoot: null,
     lastFolderName: null,
@@ -216,25 +245,160 @@ export default function App() {
     globalsFileContent: null,
     testFile: initialTestFile,
     selectedTestIndex: 0,
+    editingFolderHooks: null,
+    folderHooks: { version: '1.0.0' },
     results: [],
     isRunning: false,
     runningTestId: null,
     showVariables: false,
-    showGlobalVariables: true,
+    showGlobalVariables: false,
     headless: true,
     editorTab: 'test',
     sidebarTab: 'files',
     showHelpDialog: false,
     showRecordDialog: false,
     pluginsLoaded: false,
+    autoSaveStatus: 'idle',
+    resultsPanelCollapsed: false,
+    sidebarCollapsed: false,
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const dirHandleRef = useRef<FileSystemDirectoryHandle | null>(null);
   const globalsHandleRef = useRef<FileSystemFileHandle | null>(null);
+  const autoSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitialLoadRef = useRef(true);
 
   const selectedTest = state.testFile.tests[state.selectedTestIndex];
+
+  // Auto-save effect - debounced save when test file changes
+  useEffect(() => {
+    // Skip auto-save during initial load
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      return;
+    }
+
+    // Only auto-save if we have a file open in a project folder
+    if (!state.selectedFilePath || !state.projectRoot) {
+      return;
+    }
+
+    // Clear any pending auto-save
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    // Show saving indicator
+    setState(prev => ({ ...prev, autoSaveStatus: 'saving' }));
+
+    // Debounce auto-save by 1 second
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      const selectedNode = findNodeByPath(state.projectRoot, state.selectedFilePath);
+      if (selectedNode?.handle) {
+        try {
+          const writable = await (selectedNode.handle as FileSystemFileHandle).createWritable();
+          await writable.write(JSON.stringify(state.testFile, null, 2));
+          await writable.close();
+          selectedNode.testFile = state.testFile;
+          console.log('[Auto-save] Saved:', state.selectedFilePath);
+          setState(prev => ({ ...prev, autoSaveStatus: 'saved' }));
+          // Clear "saved" status after 2 seconds
+          setTimeout(() => {
+            setState(prev => prev.autoSaveStatus === 'saved' ? { ...prev, autoSaveStatus: 'idle' } : prev);
+          }, 2000);
+        } catch (error) {
+          console.error('[Auto-save] Failed to save:', error);
+          setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+        }
+      } else {
+        setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+      }
+    }, 1000);
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [state.testFile, state.selectedFilePath, state.projectRoot]);
+
+  // Auto-save effect for folder hooks
+  useEffect(() => {
+    // Skip if not editing folder hooks
+    if (!state.editingFolderHooks) {
+      return;
+    }
+
+    // Skip auto-save during initial load
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      return;
+    }
+
+    // Clear any pending auto-save
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    // Show saving indicator
+    setState(prev => ({ ...prev, autoSaveStatus: 'saving' }));
+
+    // Debounce auto-save by 1 second
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      const folderNode = state.editingFolderHooks;
+      if (!folderNode?.folderHandle) {
+        setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+        return;
+      }
+
+      try {
+        // Check if hooks are empty
+        const hasHooks = state.folderHooks.beforeAll?.length || state.folderHooks.afterAll?.length ||
+                         state.folderHooks.beforeEach?.length || state.folderHooks.afterEach?.length;
+
+        if (hasHooks) {
+          // Create or update _hooks.testblocks.json
+          const hooksHandle = folderNode.hooksFileHandle ||
+            await folderNode.folderHandle.getFileHandle('_hooks.testblocks.json', { create: true });
+          const writable = await hooksHandle.createWritable();
+          await writable.write(JSON.stringify(state.folderHooks, null, 2));
+          await writable.close();
+
+          // Update the node
+          folderNode.folderHooks = state.folderHooks;
+          folderNode.hooksFileHandle = hooksHandle;
+          console.log('[Auto-save] Saved folder hooks:', folderNode.path);
+        } else if (folderNode.hooksFileHandle) {
+          // Delete the hooks file if no hooks defined
+          try {
+            await folderNode.folderHandle.removeEntry('_hooks.testblocks.json');
+            folderNode.folderHooks = undefined;
+            folderNode.hooksFileHandle = undefined;
+            console.log('[Auto-save] Removed empty folder hooks:', folderNode.path);
+          } catch {
+            // File might not exist, that's ok
+          }
+        }
+
+        setState(prev => ({ ...prev, autoSaveStatus: 'saved' }));
+        // Clear "saved" status after 2 seconds
+        setTimeout(() => {
+          setState(prev => prev.autoSaveStatus === 'saved' ? { ...prev, autoSaveStatus: 'idle' } : prev);
+        }, 2000);
+      } catch (error) {
+        console.error('[Auto-save] Failed to save folder hooks:', error);
+        setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+      }
+    }, 1000);
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [state.folderHooks, state.editingFolderHooks]);
 
   // Helper to open a directory from a handle
   const openDirectoryFromHandle = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
@@ -320,6 +484,38 @@ export default function App() {
     fetchPlugins();
   }, []);
 
+  // Update variable context for autocomplete
+  useEffect(() => {
+    // Set global variables
+    setGlobalVariables(state.globalVariables);
+
+    // Set file variables (only when editing a file, not folder hooks)
+    if (!state.editingFolderHooks) {
+      setFileVariables(state.testFile.variables || null);
+    } else {
+      setFileVariables(null);
+    }
+
+    // Set editing mode
+    setEditingMode(state.editingFolderHooks ? 'folder' : 'file');
+
+    // Set data columns from current test's data (if data-driven)
+    const currentTest = state.testFile.tests[state.selectedTestIndex];
+    if (currentTest?.data && currentTest.data.length > 0) {
+      // Extract column names from first data row
+      const columns = Object.keys(currentTest.data[0].values || {});
+      setDataColumns(columns);
+    } else {
+      setDataColumns([]);
+    }
+  }, [
+    state.globalVariables,
+    state.testFile.variables,
+    state.editingFolderHooks,
+    state.testFile.tests,
+    state.selectedTestIndex,
+  ]);
+
   // Re-open last folder (triggered by user click)
   const handleReopenLastFolder = useCallback(async () => {
     try {
@@ -354,7 +550,7 @@ export default function App() {
       } catch (e) {
         if ((e as Error).name !== 'AbortError') {
           console.error('Failed to open folder:', e);
-          alert('Failed to open folder: ' + (e as Error).message);
+          toast.error('Failed to open folder: ' + (e as Error).message);
         }
       }
     } else {
@@ -496,6 +692,9 @@ export default function App() {
       clearCustomBlocks();
     }
 
+    // Reset initial load flag to prevent auto-save on file load
+    isInitialLoadRef.current = true;
+
     setState(prev => ({
       ...prev,
       selectedFilePath: node.path,
@@ -504,12 +703,45 @@ export default function App() {
       results: [],
       editorTab: 'test',
       sidebarTab: 'tests',
+      editingFolderHooks: null, // Clear folder hooks editing mode
+      folderHooks: { version: '1.0.0' },
+    }));
+  }, []);
+
+  // Select a folder to configure hooks
+  const handleSelectFolder = useCallback((node: FileNode) => {
+    if (node.type !== 'folder') return;
+
+    // Load folder hooks or create empty ones
+    const hooks = node.folderHooks || { version: '1.0.0' };
+
+    setState(prev => ({
+      ...prev,
+      editingFolderHooks: node,
+      folderHooks: hooks,
+      selectedFilePath: null, // Clear file selection
+      editorTab: 'beforeAll', // Start with beforeAll tab
+      sidebarTab: 'files', // Show files tab
     }));
   }, []);
 
   // Handle workspace changes for test steps
   const handleWorkspaceChange = useCallback((steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => {
     setState(prev => {
+      // If editing folder hooks, update folder hooks state
+      if (prev.editingFolderHooks) {
+        const hookType = prev.editorTab as 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach';
+        if (hookType === 'test') return prev; // Should not happen but safety check
+
+        return {
+          ...prev,
+          folderHooks: {
+            ...prev.folderHooks,
+            [hookType]: steps.length > 0 ? steps as TestStep[] : undefined,
+          },
+        };
+      }
+
       // If we're on a lifecycle tab, update that instead
       if (prev.editorTab !== 'test') {
         return {
@@ -789,22 +1021,29 @@ export default function App() {
 
   // Get the current steps based on the selected tab
   const getCurrentSteps = useCallback(() => {
+    // If editing folder hooks
+    if (state.editingFolderHooks) {
+      const hookType = state.editorTab as 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach';
+      return (state.folderHooks[hookType] || []) as unknown[];
+    }
+
     if (state.editorTab === 'test') {
       return selectedTest?.steps as unknown[];
     }
     return (state.testFile[state.editorTab] || []) as unknown[];
-  }, [state.editorTab, state.testFile, selectedTest]);
+  }, [state.editorTab, state.testFile, state.editingFolderHooks, state.folderHooks, selectedTest]);
 
   // Get the name for the current editor tab
   const getEditorTitle = useCallback(() => {
+    const prefix = state.editingFolderHooks ? 'Folder ' : '';
     switch (state.editorTab) {
-      case 'beforeAll': return 'Before All Tests';
-      case 'afterAll': return 'After All Tests';
-      case 'beforeEach': return 'Before Each Test';
-      case 'afterEach': return 'After Each Test';
+      case 'beforeAll': return `${prefix}Before All`;
+      case 'afterAll': return `${prefix}After All`;
+      case 'beforeEach': return `${prefix}Before Each`;
+      case 'afterEach': return `${prefix}After Each`;
       default: return selectedTest?.name || 'Test';
     }
-  }, [state.editorTab, selectedTest]);
+  }, [state.editorTab, state.editingFolderHooks, selectedTest]);
 
   // Save test file
   const handleSave = useCallback(async () => {
@@ -891,7 +1130,7 @@ export default function App() {
           sidebarTab: 'tests',
         }));
       } catch (err) {
-        alert('Failed to load test file: ' + (err as Error).message);
+        toast.error('Failed to load test file: ' + (err as Error).message);
       }
     };
     reader.readAsText(file);
@@ -921,7 +1160,7 @@ export default function App() {
   // Delete test
   const handleDeleteTest = useCallback((index: number) => {
     if (state.testFile.tests.length <= 1) {
-      alert('Cannot delete the last test case');
+      toast.warning('Cannot delete the last test case');
       return;
     }
 
@@ -943,10 +1182,16 @@ export default function App() {
     setState(prev => ({ ...prev, isRunning: true, runningTestId: null, results: [] }));
 
     try {
+      // Collect folder hooks from the hierarchy
+      const folderHooks = collectFolderHooks(state.projectRoot, state.selectedFilePath);
+
       const response = await fetch(`/api/run?headless=${state.headless}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(state.testFile),
+        body: JSON.stringify({
+          testFile: state.testFile,
+          folderHooks: folderHooks.length > 0 ? folderHooks : undefined,
+        }),
       });
 
       const data = await response.json();
@@ -955,7 +1200,7 @@ export default function App() {
         const errorMsg = data.message || data.error || 'Unknown error';
         console.error('Test run failed:', errorMsg);
         setState(prev => ({ ...prev, isRunning: false }));
-        alert(`Test run failed: ${errorMsg}`);
+        toast.error(`Test run failed: ${errorMsg}`);
         return;
       }
 
@@ -963,9 +1208,9 @@ export default function App() {
     } catch (err) {
       console.error('Failed to run tests:', err);
       setState(prev => ({ ...prev, isRunning: false }));
-      alert('Failed to run tests. Make sure the server is running.');
+      toast.error('Failed to run tests. Make sure the server is running.');
     }
-  }, [state.testFile, state.headless]);
+  }, [state.testFile, state.headless, state.projectRoot, state.selectedFilePath]);
 
   // Run single test
   const handleRunTest = useCallback(async (testId: string, e?: React.MouseEvent) => {
@@ -976,12 +1221,18 @@ export default function App() {
     setState(prev => ({ ...prev, isRunning: true, runningTestId: testId, results: [] }));
 
     try {
+      // Collect folder hooks from the hierarchy
+      const folderHooks = collectFolderHooks(state.projectRoot, state.selectedFilePath);
+
       const response = await fetch(`/api/run?headless=${state.headless}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...state.testFile,
-          tests: state.testFile.tests.filter(t => t.id === testId),
+          testFile: {
+            ...state.testFile,
+            tests: state.testFile.tests.filter(t => t.id === testId),
+          },
+          folderHooks: folderHooks.length > 0 ? folderHooks : undefined,
         }),
       });
 
@@ -991,7 +1242,7 @@ export default function App() {
         const errorMsg = data.message || data.error || 'Unknown error';
         console.error('Test run failed:', errorMsg);
         setState(prev => ({ ...prev, isRunning: false, runningTestId: null }));
-        alert(`Test run failed: ${errorMsg}`);
+        toast.error(`Test run failed: ${errorMsg}`);
         return;
       }
 
@@ -999,9 +1250,9 @@ export default function App() {
     } catch (err) {
       console.error('Failed to run test:', err);
       setState(prev => ({ ...prev, isRunning: false, runningTestId: null }));
-      alert('Failed to run test. Make sure the server is running.');
+      toast.error('Failed to run test. Make sure the server is running.');
     }
-  }, [state.testFile, state.headless]);
+  }, [state.testFile, state.headless, state.projectRoot, state.selectedFilePath]);
 
   // Update test name
   const handleTestNameChange = useCallback((name: string) => {
@@ -1123,6 +1374,68 @@ export default function App() {
     });
   }, []);
 
+  // Handle updating all global variables at once (from VariablesEditor)
+  const handleGlobalVariablesChange = useCallback((variables: Array<{ name: string; value: string }>) => {
+    const newVars = variablesToRecord(variables);
+
+    setState(prev => {
+      const newGlobalsFileContent: GlobalsFile = {
+        ...prev.globalsFileContent,
+        variables: newVars,
+      };
+
+      // Save to file asynchronously
+      if (globalsHandleRef.current) {
+        (async () => {
+          try {
+            const writable = await globalsHandleRef.current!.createWritable();
+            await writable.write(JSON.stringify(newGlobalsFileContent, null, 2));
+            await writable.close();
+            console.log('[handleGlobalVariablesChange] Saved globals.json');
+          } catch (error) {
+            console.error('[handleGlobalVariablesChange] Failed to save globals.json:', error);
+          }
+        })();
+      }
+
+      return {
+        ...prev,
+        globalVariables: newVars,
+        globalsFileContent: newGlobalsFileContent,
+      };
+    });
+  }, []);
+
+  // Handle updating all file variables at once (from VariablesEditor)
+  const handleFileVariablesChange = useCallback((variables: Array<{ name: string; value: string }>) => {
+    setState(prev => {
+      // Convert to the expected format with 'default' wrapper
+      const newVars: Record<string, VariableDefinition> = {};
+      for (const v of variables) {
+        if (v.name.trim()) {
+          // Try to parse as JSON for complex values
+          let parsedValue: unknown = v.value;
+          try {
+            if (v.value.startsWith('{') || v.value.startsWith('[') || v.value === 'true' || v.value === 'false' || (!isNaN(Number(v.value)) && v.value !== '')) {
+              parsedValue = JSON.parse(v.value);
+            }
+          } catch {
+            // Keep as string
+          }
+          newVars[v.name] = { default: parsedValue };
+        }
+      }
+
+      return {
+        ...prev,
+        testFile: {
+          ...prev.testFile,
+          variables: newVars,
+        },
+      };
+    });
+  }, []);
+
   // Handle recorded steps from RecordDialog
   const handleStepsRecorded = useCallback((steps: TestStep[], mode: 'append' | 'new') => {
     if (mode === 'append') {
@@ -1136,9 +1449,26 @@ export default function App() {
           ...newTests[prev.selectedTestIndex],
           steps: [...currentSteps, ...steps],
         };
+        const updatedTestFile = { ...prev.testFile, tests: newTests };
+
+        // Auto-save to project folder if file is open
+        const selectedNode = findNodeByPath(prev.projectRoot, prev.selectedFilePath);
+        if (selectedNode?.handle) {
+          (async () => {
+            try {
+              const writable = await (selectedNode.handle as FileSystemFileHandle).createWritable();
+              await writable.write(JSON.stringify(updatedTestFile, null, 2));
+              await writable.close();
+              console.log('[handleStepsRecorded] Saved recorded steps to:', prev.selectedFilePath);
+            } catch (error) {
+              console.error('[handleStepsRecorded] Failed to save:', error);
+            }
+          })();
+        }
+
         return {
           ...prev,
-          testFile: { ...prev.testFile, tests: newTests },
+          testFile: updatedTestFile,
           showRecordDialog: false,
         };
       });
@@ -1151,13 +1481,33 @@ export default function App() {
         steps,
         tags: ['recorded'],
       };
-      setState(prev => ({
-        ...prev,
-        testFile: { ...prev.testFile, tests: [...prev.testFile.tests, newTest] },
-        selectedTestIndex: prev.testFile.tests.length,
-        showRecordDialog: false,
-        editorTab: 'test',
-      }));
+      setState(prev => {
+        const updatedTestFile = { ...prev.testFile, tests: [...prev.testFile.tests, newTest] };
+
+        // Auto-save to project folder if file is open
+        const selectedNode = findNodeByPath(prev.projectRoot, prev.selectedFilePath);
+        if (selectedNode?.handle) {
+          (async () => {
+            try {
+              const writable = await (selectedNode.handle as FileSystemFileHandle).createWritable();
+              await writable.write(JSON.stringify(updatedTestFile, null, 2));
+              await writable.close();
+              selectedNode.testFile = updatedTestFile;
+              console.log('[handleStepsRecorded] Saved new recorded test to:', prev.selectedFilePath);
+            } catch (error) {
+              console.error('[handleStepsRecorded] Failed to save:', error);
+            }
+          })();
+        }
+
+        return {
+          ...prev,
+          testFile: updatedTestFile,
+          selectedTestIndex: prev.testFile.tests.length,
+          showRecordDialog: false,
+          editorTab: 'test',
+        };
+      });
     }
   }, []);
 
@@ -1197,7 +1547,7 @@ export default function App() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to download HTML report:', err);
-      alert('Failed to download HTML report');
+      toast.error('Failed to download HTML report');
     }
   }, [state.testFile, state.results]);
 
@@ -1232,7 +1582,7 @@ export default function App() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to download JUnit report:', err);
-      alert('Failed to download JUnit report');
+      toast.error('Failed to download JUnit report');
     }
   }, [state.testFile, state.results]);
 
@@ -1292,9 +1642,21 @@ export default function App() {
       <header className="header">
         <h1>
           <span>TestBlocks</span>
-          {state.selectedFilePath && (
+          {(state.selectedFilePath || state.editingFolderHooks) && (
             <span className="header-file-path">
-              {state.selectedFilePath}
+              {state.editingFolderHooks ? (
+                <>
+                  <span className="folder-hooks-label">Folder Hooks:</span> {state.editingFolderHooks.path}
+                </>
+              ) : (
+                state.selectedFilePath
+              )}
+              {state.autoSaveStatus === 'saving' && (
+                <span className="auto-save-indicator saving">Saving...</span>
+              )}
+              {state.autoSaveStatus === 'saved' && (
+                <span className="auto-save-indicator saved">Saved</span>
+              )}
             </span>
           )}
         </h1>
@@ -1368,7 +1730,22 @@ export default function App() {
       {/* Main content */}
       <main className="main-content">
         {/* Sidebar */}
-        <aside className="sidebar">
+        <aside className={`sidebar${state.sidebarCollapsed ? ' collapsed' : ''}`}>
+          {/* Sidebar header with toggle */}
+          <div className="sidebar-toggle-header">
+            <button
+              className="panel-toggle-btn"
+              onClick={() => {
+                setState(prev => ({ ...prev, sidebarCollapsed: !prev.sidebarCollapsed }));
+                setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+              }}
+              title={state.sidebarCollapsed ? 'Expand panel' : 'Collapse panel'}
+            >
+              {state.sidebarCollapsed ? '▶' : '◀'}
+            </button>
+          </div>
+          {!state.sidebarCollapsed && (
+          <>
           {/* Sidebar tabs */}
           <div className="sidebar-tabs">
             <button
@@ -1401,31 +1778,35 @@ export default function App() {
                 root={state.projectRoot}
                 selectedPath={state.selectedFilePath}
                 onSelectFile={handleSelectFile}
+                onSelectFolder={handleSelectFolder}
                 onRefresh={state.projectRoot ? handleRefreshFolder : undefined}
               />
             </div>
           ) : (
             <>
               {/* Global Variables Section */}
-              {state.globalVariables && Object.keys(state.globalVariables).length > 0 && (
-                <div className="sidebar-section">
-                  <div
-                    className="sidebar-header clickable"
-                    onClick={() => setState(prev => ({ ...prev, showGlobalVariables: !prev.showGlobalVariables }))}
-                  >
-                    <h2>
-                      <span style={{ marginRight: '8px' }}>{state.showGlobalVariables ? '▼' : '▶'}</span>
-                      Global Variables
-                      <span className="global-badge" title="From globals.json">🌐</span>
-                    </h2>
-                  </div>
-                  {state.showGlobalVariables && (
-                    <div className="variables-list global-variables">
-                      {renderGlobalVariables(state.globalVariables)}
-                    </div>
-                  )}
+              <div className="sidebar-section">
+                <div
+                  className="sidebar-header clickable"
+                  onClick={() => setState(prev => ({ ...prev, showGlobalVariables: !prev.showGlobalVariables }))}
+                >
+                  <h2>
+                    <span style={{ marginRight: '8px' }}>{state.showGlobalVariables ? '▼' : '▶'}</span>
+                    Global Variables
+                    <span className="global-badge" title="From globals.json">🌐</span>
+                  </h2>
                 </div>
-              )}
+                {state.showGlobalVariables && (
+                  <div className="variables-list global-variables" style={{ padding: '8px' }}>
+                    <VariablesEditor
+                      variables={recordToVariables(state.globalVariables)}
+                      onChange={handleGlobalVariablesChange}
+                      title=""
+                      emptyMessage="No global variables. Add variables here to use across all test files."
+                    />
+                  </div>
+                )}
+              </div>
 
               {/* File Variables Section */}
               <div className="sidebar-section">
@@ -1439,29 +1820,18 @@ export default function App() {
                   </h2>
                 </div>
                 {state.showVariables && (
-                  <div className="variables-list">
-                    {Object.entries(state.testFile.variables || {}).map(([name, def]) => (
-                      <div key={name} className="variable-item">
-                        <span className="variable-name">${`{${name}}`}</span>
-                        <input
-                          type="text"
-                          value={(def as VariableDefinition).default?.toString() || ''}
-                          onChange={(e) => handleUpdateVariable(name, e.target.value)}
-                          className="variable-value"
-                          placeholder="value"
-                        />
-                        <button
-                          className="btn-icon"
-                          onClick={() => handleDeleteVariable(name)}
-                          title="Delete variable"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                    <button className="add-variable-btn" onClick={handleAddVariable}>
-                      + Add Variable
-                    </button>
+                  <div className="variables-list" style={{ padding: '8px' }}>
+                    <VariablesEditor
+                      variables={Object.entries(state.testFile.variables || {}).map(([name, def]) => ({
+                        name,
+                        value: typeof (def as VariableDefinition).default === 'string'
+                          ? (def as VariableDefinition).default as string
+                          : JSON.stringify((def as VariableDefinition).default),
+                      }))}
+                      onChange={handleFileVariablesChange}
+                      title=""
+                      emptyMessage="No file variables. Add variables specific to this test file."
+                    />
                   </div>
                 )}
               </div>
@@ -1515,6 +1885,8 @@ export default function App() {
               </div>
             </>
           )}
+          </>
+          )}
         </aside>
 
         {/* Editor area */}
@@ -1526,8 +1898,14 @@ export default function App() {
               onClick={() => setState(prev => ({ ...prev, editorTab: 'beforeAll' }))}
             >
               Before All
-              {state.testFile.beforeAll && state.testFile.beforeAll.length > 0 && (
-                <span className="tab-badge">{state.testFile.beforeAll.length}</span>
+              {state.editingFolderHooks ? (
+                state.folderHooks.beforeAll && state.folderHooks.beforeAll.length > 0 && (
+                  <span className="tab-badge">{state.folderHooks.beforeAll.length}</span>
+                )
+              ) : (
+                state.testFile.beforeAll && state.testFile.beforeAll.length > 0 && (
+                  <span className="tab-badge">{state.testFile.beforeAll.length}</span>
+                )
               )}
             </button>
             <button
@@ -1535,23 +1913,37 @@ export default function App() {
               onClick={() => setState(prev => ({ ...prev, editorTab: 'beforeEach' }))}
             >
               Before Each
-              {state.testFile.beforeEach && state.testFile.beforeEach.length > 0 && (
-                <span className="tab-badge">{state.testFile.beforeEach.length}</span>
+              {state.editingFolderHooks ? (
+                state.folderHooks.beforeEach && state.folderHooks.beforeEach.length > 0 && (
+                  <span className="tab-badge">{state.folderHooks.beforeEach.length}</span>
+                )
+              ) : (
+                state.testFile.beforeEach && state.testFile.beforeEach.length > 0 && (
+                  <span className="tab-badge">{state.testFile.beforeEach.length}</span>
+                )
               )}
             </button>
-            <button
-              className={`editor-tab test-tab ${state.editorTab === 'test' ? 'active' : ''}`}
-              onClick={() => setState(prev => ({ ...prev, editorTab: 'test' }))}
-            >
-              Test Steps
-            </button>
+            {!state.editingFolderHooks && (
+              <button
+                className={`editor-tab test-tab ${state.editorTab === 'test' ? 'active' : ''}`}
+                onClick={() => setState(prev => ({ ...prev, editorTab: 'test' }))}
+              >
+                Test Steps
+              </button>
+            )}
             <button
               className={`editor-tab ${state.editorTab === 'afterEach' ? 'active' : ''}`}
               onClick={() => setState(prev => ({ ...prev, editorTab: 'afterEach' }))}
             >
               After Each
-              {state.testFile.afterEach && state.testFile.afterEach.length > 0 && (
-                <span className="tab-badge">{state.testFile.afterEach.length}</span>
+              {state.editingFolderHooks ? (
+                state.folderHooks.afterEach && state.folderHooks.afterEach.length > 0 && (
+                  <span className="tab-badge">{state.folderHooks.afterEach.length}</span>
+                )
+              ) : (
+                state.testFile.afterEach && state.testFile.afterEach.length > 0 && (
+                  <span className="tab-badge">{state.testFile.afterEach.length}</span>
+                )
               )}
             </button>
             <button
@@ -1559,14 +1951,20 @@ export default function App() {
               onClick={() => setState(prev => ({ ...prev, editorTab: 'afterAll' }))}
             >
               After All
-              {state.testFile.afterAll && state.testFile.afterAll.length > 0 && (
-                <span className="tab-badge">{state.testFile.afterAll.length}</span>
+              {state.editingFolderHooks ? (
+                state.folderHooks.afterAll && state.folderHooks.afterAll.length > 0 && (
+                  <span className="tab-badge">{state.folderHooks.afterAll.length}</span>
+                )
+              ) : (
+                state.testFile.afterAll && state.testFile.afterAll.length > 0 && (
+                  <span className="tab-badge">{state.testFile.afterAll.length}</span>
+                )
               )}
             </button>
           </div>
 
           <div className="editor-toolbar">
-            {state.editorTab === 'test' ? (
+            {state.editorTab === 'test' && !state.editingFolderHooks ? (
               <>
                 <input
                   type="text"
@@ -1593,20 +1991,26 @@ export default function App() {
               </>
             ) : (
               <div className="lifecycle-toolbar-info">
-                <span className="lifecycle-icon">⚡</span>
+                <span className="lifecycle-icon">{state.editingFolderHooks ? '📁' : '⚡'}</span>
                 <span>{getEditorTitle()}</span>
                 <span className="lifecycle-hint">
-                  {state.editorTab === 'beforeAll' && '— Runs once before all tests'}
-                  {state.editorTab === 'afterAll' && '— Runs once after all tests'}
-                  {state.editorTab === 'beforeEach' && '— Runs before each test'}
-                  {state.editorTab === 'afterEach' && '— Runs after each test'}
+                  {state.editingFolderHooks ? (
+                    <>— Applies to all tests in this folder{state.editorTab === 'beforeAll' || state.editorTab === 'afterAll' ? '' : ' and subfolders'}</>
+                  ) : (
+                    <>
+                      {state.editorTab === 'beforeAll' && '— Runs once before all tests'}
+                      {state.editorTab === 'afterAll' && '— Runs once after all tests'}
+                      {state.editorTab === 'beforeEach' && '— Runs before each test'}
+                      {state.editorTab === 'afterEach' && '— Runs after each test'}
+                    </>
+                  )}
                 </span>
               </div>
             )}
           </div>
           <div className="blockly-container">
             <BlocklyWorkspace
-              key={`${state.editorTab}-${state.editorTab === 'test' ? selectedTest?.id : 'lifecycle'}-${state.selectedFilePath}-${state.pluginsLoaded}`}
+              key={`${state.editorTab}-${state.editorTab === 'test' ? selectedTest?.id : 'lifecycle'}-${state.selectedFilePath || state.editingFolderHooks?.path}-${state.pluginsLoaded}`}
               onWorkspaceChange={handleWorkspaceChange}
               onReplaceMatches={handleReplaceMatches}
               initialSteps={getCurrentSteps()}
@@ -1620,28 +2024,44 @@ export default function App() {
         </div>
 
         {/* Results panel */}
-        <aside className="results-panel">
+        <aside className={`results-panel${state.resultsPanelCollapsed ? ' collapsed' : ''}`}>
           <div className="results-header">
-            <h2>Results</h2>
-            {state.results.length > 0 && (
-              <div className="results-actions">
-                <button
-                  className="btn-report"
-                  onClick={handleDownloadHTMLReport}
-                  title="Download HTML Report"
-                >
-                  HTML
-                </button>
-                <button
-                  className="btn-report"
-                  onClick={handleDownloadJUnitReport}
-                  title="Download JUnit XML Report"
-                >
-                  xUnit
-                </button>
-              </div>
+            <button
+              className="panel-toggle-btn"
+              onClick={() => {
+                setState(prev => ({ ...prev, resultsPanelCollapsed: !prev.resultsPanelCollapsed }));
+                // Trigger resize after CSS transition completes so Blockly can resize
+                setTimeout(() => window.dispatchEvent(new Event('resize')), 250);
+              }}
+              title={state.resultsPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
+            >
+              {state.resultsPanelCollapsed ? '◀' : '▶'}
+            </button>
+            {!state.resultsPanelCollapsed && (
+              <>
+                <h2>Results</h2>
+                {state.results.length > 0 && (
+                  <div className="results-actions">
+                    <button
+                      className="btn-report"
+                      onClick={handleDownloadHTMLReport}
+                      title="Download HTML Report"
+                    >
+                      HTML
+                    </button>
+                    <button
+                      className="btn-report"
+                      onClick={handleDownloadJUnitReport}
+                      title="Download JUnit XML Report"
+                    >
+                      xUnit
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
+          {!state.resultsPanelCollapsed && (
           <div className="results-content">
             {state.results.length === 0 ? (
               <div className="empty-state">
@@ -1676,6 +2096,7 @@ export default function App() {
               ))
             )}
           </div>
+          )}
         </aside>
       </main>
 
@@ -1689,6 +2110,8 @@ export default function App() {
         onClose={() => setState(prev => ({ ...prev, showRecordDialog: false }))}
         onStepsRecorded={handleStepsRecorded}
       />
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
@@ -1707,4 +2130,40 @@ function findNodeByPath(root: FileNode | null, path: string | null): FileNode | 
   }
 
   return null;
+}
+
+// Helper to collect folder hooks from root to a file's parent folder
+// Returns array of FolderHooks in order from outermost to innermost folder
+function collectFolderHooks(root: FileNode | null, filePath: string | null): FolderHooks[] {
+  if (!root || !filePath) return [];
+
+  const hooks: FolderHooks[] = [];
+
+  // Recursively find the path and collect hooks along the way
+  function findAndCollect(node: FileNode, targetPath: string, currentHooks: FolderHooks[]): FolderHooks[] | null {
+    // If this folder has hooks, add them to the chain
+    const newHooks = node.folderHooks
+      ? [...currentHooks, node.folderHooks]
+      : currentHooks;
+
+    // Check if the target file is in this folder's direct children
+    if (node.children) {
+      for (const child of node.children) {
+        if (child.type === 'file' && child.path === targetPath) {
+          // Found the file - return the hooks collected so far
+          return newHooks;
+        }
+        if (child.type === 'folder') {
+          const result = findAndCollect(child, targetPath, newHooks);
+          if (result !== null) {
+            return result;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  return findAndCollect(root, filePath, []) || [];
 }
