@@ -5,9 +5,38 @@ import fs from 'fs';
 import { TestFile, TestResult, FolderHooks } from '../core';
 
 // Read version from package.json
-const packageJsonPath = path.join(__dirname, '../../package.json');
-const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-const VERSION = packageJson.version || '0.0.0';
+function getVersion(): string {
+  try {
+    // Method 1: Try require.resolve (works for global/local installs)
+    try {
+      const pkgPath = require.resolve('@testsmith/testblocks/package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.version) return pkg.version;
+    } catch {
+      // Package might not be installed under this name
+    }
+
+    // Method 2: Try relative paths
+    const possiblePaths = [
+      path.join(__dirname, '../../package.json'),
+      path.join(__dirname, '../../../package.json'),
+      path.join(__dirname, '../../../../package.json'),
+    ];
+    for (const pkgPath of possiblePaths) {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name === '@testsmith/testblocks' && pkg.version) {
+          return pkg.version;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return '0.0.0';
+}
+
+const VERSION = getVersion();
 import { TestExecutor } from './executor';
 import { generateHTMLReport, generateJUnitXML, getTimestamp, ReportData } from '../cli/reporters';
 import {

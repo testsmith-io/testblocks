@@ -2,9 +2,44 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import { TestFile, TestResult } from '../core';
+import { TestFile, TestResult, FolderHooks } from '../core';
 import { TestExecutor } from './executor';
 import { generateHTMLReport, generateJUnitXML, getTimestamp, ReportData } from '../cli/reporters';
+
+// Read version from package.json
+function getVersion(): string {
+  try {
+    // Method 1: Try require.resolve to find package.json (works for global/local installs)
+    try {
+      const pkgPath = require.resolve('@testsmith/testblocks/package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+      if (pkg.version) return pkg.version;
+    } catch {
+      // Package might not be installed under this name, try relative paths
+    }
+
+    // Method 2: Try relative paths from this file
+    const possiblePaths = [
+      path.join(__dirname, '../../package.json'),      // dist/server -> package.json
+      path.join(__dirname, '../../../package.json'),   // nested node_modules
+      path.join(__dirname, '../../../../package.json'), // scoped package in node_modules
+    ];
+    for (const pkgPath of possiblePaths) {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        // Verify it's our package
+        if (pkg.name === '@testsmith/testblocks' && pkg.version) {
+          return pkg.version;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return '0.0.0';
+}
+
+const VERSION = getVersion();
 import {
   initializeServerPlugins,
   setPluginsDirectory,
@@ -31,6 +66,61 @@ export interface ServerOptions {
   pluginsDir?: string;
   globalsDir?: string;
   open?: boolean;
+}
+
+/**
+ * Merge folder hooks into a test file.
+ * Folder hooks are ordered from outermost to innermost folder.
+ * - beforeAll: run parent hooks first, then child hooks, then test file hooks
+ * - afterAll: run test file hooks first, then child hooks, then parent hooks
+ * - beforeEach/afterEach: same pattern
+ */
+function mergeFolderHooksIntoTestFile(testFile: TestFile, folderHooks: FolderHooks[]): TestFile {
+  if (!folderHooks || folderHooks.length === 0) {
+    return testFile;
+  }
+
+  // Collect all steps from folder hooks (parent to child order is already provided)
+  const beforeAllSteps: unknown[] = [];
+  const afterAllSteps: unknown[] = [];
+  const beforeEachSteps: unknown[] = [];
+  const afterEachSteps: unknown[] = [];
+
+  // Parent to child order for beforeAll/beforeEach
+  for (const hooks of folderHooks) {
+    if (hooks.beforeAll) beforeAllSteps.push(...hooks.beforeAll);
+    if (hooks.beforeEach) beforeEachSteps.push(...hooks.beforeEach);
+  }
+
+  // Child to parent order for afterAll/afterEach
+  for (let i = folderHooks.length - 1; i >= 0; i--) {
+    const hooks = folderHooks[i];
+    if (hooks.afterAll) afterAllSteps.unshift(...hooks.afterAll);
+    if (hooks.afterEach) afterEachSteps.unshift(...hooks.afterEach);
+  }
+
+  // Merge with test file hooks
+  const merged: TestFile = {
+    ...testFile,
+    beforeAll: [
+      ...beforeAllSteps,
+      ...(testFile.beforeAll || []),
+    ] as TestFile['beforeAll'],
+    afterAll: [
+      ...(testFile.afterAll || []),
+      ...afterAllSteps,
+    ] as TestFile['afterAll'],
+    beforeEach: [
+      ...beforeEachSteps,
+      ...(testFile.beforeEach || []),
+    ] as TestFile['beforeEach'],
+    afterEach: [
+      ...(testFile.afterEach || []),
+      ...afterEachSteps,
+    ] as TestFile['afterEach'],
+  };
+
+  return merged;
 }
 
 export async function startServer(options: ServerOptions = {}): Promise<void> {
@@ -66,7 +156,12 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
 
   // Health check
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', version: '1.0.0' });
+    res.json({ status: 'ok', version: VERSION });
+  });
+
+  // Version endpoint
+  app.get('/api/version', (_req, res) => {
+    res.json({ version: VERSION });
   });
 
   // List available plugins (with full block definitions for client registration)
@@ -127,13 +222,16 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   // Run tests
   app.post('/api/run', async (req, res) => {
     try {
-      const testFile = req.body as TestFile;
+      const { testFile, folderHooks } = req.body as { testFile: TestFile; folderHooks?: FolderHooks[] };
 
       if (!testFile || !testFile.tests) {
         return res.status(400).json({ error: 'Invalid test file format' });
       }
 
       console.log(`Running ${testFile.tests.length} tests from "${testFile.name}"...`);
+
+      // Merge folder hooks into test file
+      const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
       const globalVars = getGlobalVariables();
       const testIdAttr = getTestIdAttribute();
@@ -146,7 +244,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         baseDir: globalsDir,
       });
 
-      const results = await executor.runTestFile(testFile);
+      const results = await executor.runTestFile(mergedTestFile);
 
       const passed = results.filter(r => r.status === 'passed').length;
       const failed = results.filter(r => r.status === 'failed').length;
@@ -167,7 +265,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   // Run a single test
   app.post('/api/run/:testId', async (req, res) => {
     try {
-      const testFile = req.body as TestFile;
+      const { testFile, folderHooks } = req.body as { testFile: TestFile; folderHooks?: FolderHooks[] };
       const { testId } = req.params;
 
       const test = testFile.tests.find(t => t.id === testId);
@@ -175,6 +273,9 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       if (!test) {
         return res.status(404).json({ error: `Test not found: ${testId}` });
       }
+
+      // Merge folder hooks for beforeEach/afterEach
+      const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
       const globalVars = getGlobalVariables();
       const testIdAttr = getTestIdAttribute();
@@ -187,12 +288,12 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         baseDir: globalsDir,
       });
 
-      if (testFile.procedures) {
-        executor.registerProcedures(testFile.procedures);
+      if (mergedTestFile.procedures) {
+        executor.registerProcedures(mergedTestFile.procedures);
       }
 
       await executor.initialize();
-      const result = await executor.runTest(test, testFile.variables);
+      const result = await executor.runTest(test, mergedTestFile.variables);
       await executor.cleanup();
 
       res.json(result);
