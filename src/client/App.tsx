@@ -942,6 +942,168 @@ export default function App() {
     );
   }, [showPrompt]);
 
+  // Rename a file or folder
+  const handleRename = useCallback((node: FileNode) => {
+    const isFolder = node.type === 'folder';
+    const currentName = isFolder ? node.name : node.name.replace('.testblocks.json', '');
+
+    showPrompt(
+      isFolder ? 'Rename Folder' : 'Rename File',
+      [{ name: 'newName', label: 'New name', defaultValue: currentName, placeholder: 'Enter new name', required: true }],
+      async (values) => {
+        const newName = values.newName?.trim();
+        if (!newName || newName === currentName) return;
+
+        // Get parent path and handle
+        const pathParts = node.path.split('/');
+        pathParts.pop();
+        const parentPath = pathParts.join('/');
+
+        // Find parent node to get its handle
+        const findParent = (root: FileNode | null, targetPath: string): FileNode | null => {
+          if (!root) return null;
+          if (root.path === targetPath) return root;
+          if (root.children) {
+            for (const child of root.children) {
+              const found = findParent(child, targetPath);
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+
+        const parentNode = findParent(state.projectRoot, parentPath);
+        if (!parentNode?.folderHandle) {
+          toast.error('Cannot rename: parent folder handle not available');
+          return;
+        }
+
+        try {
+          if (isFolder) {
+            // For folders: create new folder, move contents recursively, delete old
+            const newFolderHandle = await parentNode.folderHandle.getDirectoryHandle(newName, { create: true });
+
+            // Helper to copy directory contents recursively
+            const copyDir = async (srcHandle: FileSystemDirectoryHandle, destHandle: FileSystemDirectoryHandle) => {
+              for await (const entry of (srcHandle as any).values()) {
+                if (entry.kind === 'file') {
+                  const file = await entry.getFile();
+                  const newFileHandle = await destHandle.getFileHandle(entry.name, { create: true });
+                  const writable = await newFileHandle.createWritable();
+                  await writable.write(await file.arrayBuffer());
+                  await writable.close();
+                } else if (entry.kind === 'directory') {
+                  const newSubDir = await destHandle.getDirectoryHandle(entry.name, { create: true });
+                  await copyDir(entry, newSubDir);
+                }
+              }
+            };
+
+            if (node.folderHandle) {
+              await copyDir(node.folderHandle, newFolderHandle);
+            }
+
+            // Delete old folder
+            await parentNode.folderHandle.removeEntry(node.name, { recursive: true });
+
+            // Update tree
+            const newPath = `${parentPath}/${newName}`;
+            setState(prev => {
+              const updateTree = (root: FileNode): FileNode => {
+                if (root.path === node.path) {
+                  // Update this node and all its children paths
+                  const updatePaths = (n: FileNode, oldBase: string, newBase: string): FileNode => {
+                    const updated: FileNode = {
+                      ...n,
+                      path: n.path.replace(oldBase, newBase),
+                      name: n.path === node.path ? newName : n.name,
+                      folderHandle: n.path === node.path ? newFolderHandle : n.folderHandle,
+                    };
+                    if (n.children) {
+                      updated.children = n.children.map(c => updatePaths(c, oldBase, newBase));
+                    }
+                    return updated;
+                  };
+                  return updatePaths(root, node.path, newPath);
+                }
+                if (root.children) {
+                  return { ...root, children: root.children.map(updateTree) };
+                }
+                return root;
+              };
+
+              const newProjectRoot = prev.projectRoot ? updateTree(prev.projectRoot) : null;
+
+              // Update selected path if it was inside the renamed folder
+              let newSelectedPath = prev.selectedFilePath;
+              if (prev.selectedFilePath?.startsWith(node.path + '/')) {
+                newSelectedPath = prev.selectedFilePath.replace(node.path, newPath);
+              } else if (prev.selectedFilePath === node.path) {
+                newSelectedPath = newPath;
+              }
+
+              return { ...prev, projectRoot: newProjectRoot, selectedFilePath: newSelectedPath };
+            });
+
+            toast.success(`Renamed to: ${newName}`);
+          } else {
+            // For files: create new file, copy content, delete old
+            const finalName = newName.endsWith('.testblocks.json')
+              ? newName
+              : `${newName}.testblocks.json`;
+
+            if (!node.handle) {
+              toast.error('Cannot rename: file handle not available');
+              return;
+            }
+
+            // Read old file content
+            const file = await node.handle.getFile();
+            const content = await file.text();
+
+            // Create new file
+            const newFileHandle = await parentNode.folderHandle.getFileHandle(finalName, { create: true });
+            const writable = await newFileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+
+            // Delete old file
+            await parentNode.folderHandle.removeEntry(node.name);
+
+            // Update tree
+            const newPath = `${parentPath}/${finalName}`;
+            setState(prev => {
+              const updateTree = (root: FileNode): FileNode => {
+                if (root.path === node.path) {
+                  return {
+                    ...root,
+                    name: finalName,
+                    path: newPath,
+                    handle: newFileHandle,
+                  };
+                }
+                if (root.children) {
+                  return { ...root, children: root.children.map(updateTree) };
+                }
+                return root;
+              };
+
+              const newProjectRoot = prev.projectRoot ? updateTree(prev.projectRoot) : null;
+              const newSelectedPath = prev.selectedFilePath === node.path ? newPath : prev.selectedFilePath;
+
+              return { ...prev, projectRoot: newProjectRoot, selectedFilePath: newSelectedPath };
+            });
+
+            toast.success(`Renamed to: ${finalName}`);
+          }
+        } catch (error) {
+          console.error('Failed to rename:', error);
+          toast.error(`Failed to rename: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
+    );
+  }, [showPrompt, state.projectRoot]);
+
   // Handle workspace changes for test steps
   const handleWorkspaceChange = useCallback((steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => {
     setState(prev => {
@@ -2152,6 +2314,7 @@ export default function App() {
                 onRefresh={state.projectRoot ? handleRefreshFolder : undefined}
                 onCreateFile={handleCreateFile}
                 onCreateFolder={handleCreateFolder}
+                onRename={handleRename}
               />
             </div>
           ) : (

@@ -21,6 +21,7 @@ interface FileTreeProps {
   onRefresh?: () => void;
   onCreateFile?: (parentNode: FileNode) => void;
   onCreateFolder?: (parentNode: FileNode) => void;
+  onRename?: (node: FileNode) => void;
 }
 
 interface FileTreeNodeProps {
@@ -31,9 +32,10 @@ interface FileTreeNodeProps {
   onSelectFolder?: (node: FileNode) => void;
   onCreateFile?: (parentNode: FileNode) => void;
   onCreateFolder?: (parentNode: FileNode) => void;
+  onRename?: (node: FileNode) => void;
 }
 
-function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder, onCreateFile, onCreateFolder }: FileTreeNodeProps) {
+function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder, onCreateFile, onCreateFolder, onRename }: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showActions, setShowActions] = useState(false);
   const isSelected = node.path === selectedPath;
@@ -71,6 +73,14 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
     setShowActions(false);
   };
 
+  const handleRename = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onRename) {
+      onRename(node);
+    }
+    setShowActions(false);
+  };
+
   const toggleActions = (e: React.MouseEvent) => {
     e.stopPropagation();
     setShowActions(!showActions);
@@ -94,28 +104,33 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
         {isFolder && node.folderHooks && (
           <span className="folder-hooks-indicator" title="Folder has hooks configured">⟳</span>
         )}
-        {isFolder && (onCreateFile || onCreateFolder || onSelectFolder) && (
+        {(isFolder || onRename) && (
           <div className="folder-actions">
             <button
               className="folder-action-btn"
               onClick={toggleActions}
-              title="Folder actions"
+              title="Actions"
             >
-              +
+              ⋮
             </button>
             {showActions && (
               <div className="folder-actions-menu">
-                {onCreateFile && (
+                {isFolder && onCreateFile && (
                   <button onClick={handleCreateFile} title="New test file">
                     📄 New File
                   </button>
                 )}
-                {onCreateFolder && (
+                {isFolder && onCreateFolder && (
                   <button onClick={handleCreateFolder} title="New folder">
                     📁 New Folder
                   </button>
                 )}
-                {onSelectFolder && (
+                {onRename && (
+                  <button onClick={handleRename} title="Rename">
+                    ✏️ Rename
+                  </button>
+                )}
+                {isFolder && onSelectFolder && (
                   <button onClick={handleFolderSettings} title="Configure hooks">
                     ⚙ Folder Hooks
                   </button>
@@ -137,6 +152,7 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
               onSelectFolder={onSelectFolder}
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
+              onRename={onRename}
             />
           ))}
         </div>
@@ -145,7 +161,7 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
   );
 }
 
-export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh, onCreateFile, onCreateFolder }: FileTreeProps) {
+export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh, onCreateFile, onCreateFolder, onRename }: FileTreeProps) {
   if (!root) {
     return (
       <div className="file-tree-empty">
@@ -197,6 +213,7 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
               onSelectFolder={onSelectFolder}
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
+              onRename={onRename}
             />
           ))
         ) : (
