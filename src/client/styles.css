@@ -1429,6 +1429,90 @@ body {
   color: var(--primary-color);
 }
 
+.file-tree-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.file-tree-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.file-tree-action-btn:hover {
+  background: var(--surface);
+  color: var(--primary-color);
+}
+
+.folder-actions {
+  position: relative;
+  margin-left: auto;
+}
+
+.folder-action-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.file-tree-item:hover .folder-action-btn {
+  opacity: 1;
+}
+
+.folder-action-btn:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
+}
+
+.folder-actions-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  min-width: 140px;
+  padding: 4px 0;
+}
+
+.folder-actions-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.folder-actions-menu button:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
+}
+
 .file-tree-content {
   flex: 1;
   overflow-y: auto;
@@ -2720,4 +2804,60 @@ body {
   gap: 8px;
   padding: 16px 20px;
   border-top: 1px solid var(--border-color);
+}
+
+/* Prompt Dialog */
+.prompt-dialog {
+  min-width: 400px;
+  max-width: 450px;
+}
+
+.prompt-dialog .modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.prompt-dialog .modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.prompt-dialog .modal-body {
+  padding: 0;
+}
+
+.prompt-field {
+  margin-bottom: 16px;
+}
+
+.prompt-field:last-child {
+  margin-bottom: 0;
+}
+
+.prompt-field label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.prompt-field input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  font-size: 14px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-sizing: border-box;
+}
+
+.prompt-field input[type="text"]:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px var(--primary-light);
 }

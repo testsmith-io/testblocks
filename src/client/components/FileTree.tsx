@@ -19,6 +19,8 @@ interface FileTreeProps {
   onSelectFile: (node: FileNode) => void;
   onSelectFolder?: (node: FileNode) => void;
   onRefresh?: () => void;
+  onCreateFile?: (parentNode: FileNode) => void;
+  onCreateFolder?: (parentNode: FileNode) => void;
 }
 
 interface FileTreeNodeProps {
@@ -27,10 +29,13 @@ interface FileTreeNodeProps {
   selectedPath: string | null;
   onSelectFile: (node: FileNode) => void;
   onSelectFolder?: (node: FileNode) => void;
+  onCreateFile?: (parentNode: FileNode) => void;
+  onCreateFolder?: (parentNode: FileNode) => void;
 }
 
-function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder }: FileTreeNodeProps) {
+function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder, onCreateFile, onCreateFolder }: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [showActions, setShowActions] = useState(false);
   const isSelected = node.path === selectedPath;
   const isFolder = node.type === 'folder';
   const hasChildren = isFolder && node.children && node.children.length > 0;
@@ -50,12 +55,34 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder 
     }
   };
 
+  const handleCreateFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onCreateFile) {
+      onCreateFile(node);
+    }
+    setShowActions(false);
+  };
+
+  const handleCreateFolder = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onCreateFolder) {
+      onCreateFolder(node);
+    }
+    setShowActions(false);
+  };
+
+  const toggleActions = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowActions(!showActions);
+  };
+
   return (
     <div className="file-tree-node">
       <div
         className={`file-tree-item ${isSelected ? 'selected' : ''} ${isFolder ? 'folder' : 'file'}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
+        onMouseLeave={() => setShowActions(false)}
       >
         <span className="file-tree-icon">
           {isFolder ? (isExpanded ? '📂' : '📁') : '📄'}
@@ -64,17 +91,38 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder 
         {node.testFile && (
           <span className="file-tree-badge">{node.testFile.tests.length}</span>
         )}
-        {isFolder && onSelectFolder && (
-          <button
-            className="folder-hooks-btn"
-            onClick={handleFolderSettings}
-            title="Configure folder hooks"
-          >
-            ⚙
-          </button>
-        )}
         {isFolder && node.folderHooks && (
           <span className="folder-hooks-indicator" title="Folder has hooks configured">⟳</span>
+        )}
+        {isFolder && (onCreateFile || onCreateFolder || onSelectFolder) && (
+          <div className="folder-actions">
+            <button
+              className="folder-action-btn"
+              onClick={toggleActions}
+              title="Folder actions"
+            >
+              +
+            </button>
+            {showActions && (
+              <div className="folder-actions-menu">
+                {onCreateFile && (
+                  <button onClick={handleCreateFile} title="New test file">
+                    📄 New File
+                  </button>
+                )}
+                {onCreateFolder && (
+                  <button onClick={handleCreateFolder} title="New folder">
+                    📁 New Folder
+                  </button>
+                )}
+                {onSelectFolder && (
+                  <button onClick={handleFolderSettings} title="Configure hooks">
+                    ⚙ Folder Hooks
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
       {isFolder && isExpanded && hasChildren && (
@@ -87,6 +135,8 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder 
               selectedPath={selectedPath}
               onSelectFile={onSelectFile}
               onSelectFolder={onSelectFolder}
+              onCreateFile={onCreateFile}
+              onCreateFolder={onCreateFolder}
             />
           ))}
         </div>
@@ -95,7 +145,7 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder 
   );
 }
 
-export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh }: FileTreeProps) {
+export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh, onCreateFile, onCreateFolder }: FileTreeProps) {
   if (!root) {
     return (
       <div className="file-tree-empty">
@@ -109,11 +159,31 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
     <div className="file-tree">
       <div className="file-tree-header">
         <span className="file-tree-root-name">{root.name}</span>
-        {onRefresh && (
-          <button className="file-tree-refresh" onClick={onRefresh} title="Refresh">
-            ↻
-          </button>
-        )}
+        <div className="file-tree-header-actions">
+          {onCreateFile && (
+            <button
+              className="file-tree-action-btn"
+              onClick={() => onCreateFile(root)}
+              title="New test file"
+            >
+              +📄
+            </button>
+          )}
+          {onCreateFolder && (
+            <button
+              className="file-tree-action-btn"
+              onClick={() => onCreateFolder(root)}
+              title="New folder"
+            >
+              +📁
+            </button>
+          )}
+          {onRefresh && (
+            <button className="file-tree-refresh" onClick={onRefresh} title="Refresh">
+              ↻
+            </button>
+          )}
+        </div>
       </div>
       <div className="file-tree-content">
         {root.children && root.children.length > 0 ? (
@@ -125,11 +195,21 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
               selectedPath={selectedPath}
               onSelectFile={onSelectFile}
               onSelectFolder={onSelectFolder}
+              onCreateFile={onCreateFile}
+              onCreateFolder={onCreateFolder}
             />
           ))
         ) : (
           <div className="file-tree-empty">
             <p>No .testblocks.json files found</p>
+            {onCreateFile && (
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => onCreateFile(root)}
+              >
+                Create Test File
+              </button>
+            )}
           </div>
         )}
       </div>

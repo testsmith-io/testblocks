@@ -4,7 +4,7 @@ import { builtInBlocks, TestStep } from '../../core';
 import { registerBlocklyBlocks, createToolbox, workspaceToTestSteps, loadStepsToWorkspace, getTestNameFromWorkspace, getTestDataFromWorkspace } from '../blockly/blockDefinitions';
 import { analyzeSelectedBlocks, registerCustomBlock, updateCustomBlock, CustomBlockConfig, getCustomBlocks, getCustomBlockConfig, isCustomBlock, ExtractedParameter } from '../blockly/customBlockCreator';
 import { CreateBlockDialog, CreateBlockResult } from './CreateBlockDialog';
-import { CreateVariableDialog, FieldValue } from './CreateVariableDialog';
+import { CreateVariableDialog, FieldValue, CreateVariableResult } from './CreateVariableDialog';
 import { JsonEditorModal } from './JsonEditorModal';
 import { FileNode } from './FileTree';
 import { getPluginBlocks, initializePlugins } from '../plugins';
@@ -74,6 +74,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
   const [variableDialogData, setVariableDialogData] = useState<{
     fieldValues: FieldValue[];
     blockType: string;
+    blockId: string;
   } | null>(null);
 
   // Store callback in ref to avoid re-initialization
@@ -235,13 +236,28 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
   }, [jsonEditorBlockId, jsonEditorFieldName]);
 
   // Handle creating a variable from the dialog
-  const handleCreateVariable = useCallback((value: string, type: 'global' | 'file', name: string) => {
+  const handleCreateVariable = useCallback((result: CreateVariableResult) => {
+    const { value, type, name, fieldName } = result;
+
+    // Update the block field with the variable reference
+    if (variableDialogData?.blockId && workspaceRef.current) {
+      const block = workspaceRef.current.getBlockById(variableDialogData.blockId);
+      if (block) {
+        const field = block.getField(fieldName);
+        if (field) {
+          field.setValue(`\${${name}}`);
+        }
+      }
+    }
+
+    // Call parent to create the variable
     if (onCreateVariableRef.current) {
       onCreateVariableRef.current(value, type, name);
     }
+
     setShowVariableDialog(false);
     setVariableDialogData(null);
-  }, []);
+  }, [variableDialogData]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -602,6 +618,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
           setVariableDialogData({
             fieldValues,
             blockType: scope.block.type,
+            blockId: scope.block.id,
           });
           setShowVariableDialog(true);
         },
@@ -741,6 +758,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
           onCreateVariable={handleCreateVariable}
           fieldValues={variableDialogData.fieldValues}
           blockType={variableDialogData.blockType}
+          blockId={variableDialogData.blockId}
         />
       )}
     </>

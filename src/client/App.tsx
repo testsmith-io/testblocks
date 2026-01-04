@@ -10,6 +10,7 @@ import { workspaceToTestSteps } from './blockly/blockDefinitions';
 import { exportCustomBlocksAsProcedures, loadCustomBlocksFromProcedures, clearCustomBlocks } from './blockly/customBlockCreator';
 import { applyMatchToTestFile, BlockMatch } from './blockly/blockMatcher';
 import { CreateBlockResult } from './components/CreateBlockDialog';
+import { PromptDialog, PromptField } from './components/PromptDialog';
 import { loadPlugin } from './plugins/pluginLoader';
 import {
   setGlobalVariables,
@@ -265,6 +266,26 @@ export default function App() {
     sidebarCollapsed: false,
     version: null,
   });
+
+  // Prompt dialog state (separate from main state to allow callbacks)
+  const [promptDialog, setPromptDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    fields: PromptField[];
+    onSubmit: (values: Record<string, string>) => void;
+  } | null>(null);
+
+  const showPrompt = useCallback((
+    title: string,
+    fields: PromptField[],
+    onSubmit: (values: Record<string, string>) => void
+  ) => {
+    setPromptDialog({ isOpen: true, title, fields, onSubmit });
+  }, []);
+
+  const closePrompt = useCallback(() => {
+    setPromptDialog(null);
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -741,6 +762,185 @@ export default function App() {
       sidebarTab: 'files', // Show files tab
     }));
   }, []);
+
+  // Create a new test file in a folder
+  const handleCreateFile = useCallback((parentNode: FileNode) => {
+    if (!parentNode.folderHandle) {
+      toast.error('Cannot create file: folder handle not available');
+      return;
+    }
+
+    showPrompt(
+      'Create Test File',
+      [{ name: 'fileName', label: 'File name', defaultValue: 'new-test', placeholder: 'Enter file name', required: true }],
+      async (values) => {
+        const fileName = values.fileName;
+        if (!fileName) return;
+
+        // Ensure it has the right extension
+        const finalName = fileName.endsWith('.testblocks.json')
+          ? fileName
+          : fileName.endsWith('.json')
+            ? fileName.replace('.json', '.testblocks.json')
+            : `${fileName}.testblocks.json`;
+
+        try {
+          // Create the new file
+          const newFileHandle = await parentNode.folderHandle!.getFileHandle(finalName, { create: true });
+
+          const newTestFile: TestFile = {
+            version: '1.0.0',
+            name: finalName.replace('.testblocks.json', ''),
+            description: '',
+            variables: {},
+            tests: [{
+              id: `test-${Date.now()}`,
+              name: 'New Test',
+              description: '',
+              steps: [],
+              tags: [],
+            }],
+          };
+
+          const writable = await newFileHandle.createWritable();
+          await writable.write(JSON.stringify(newTestFile, null, 2));
+          await writable.close();
+
+          // Add to tree and select
+          const newFilePath = `${parentNode.path}/${finalName}`;
+          const newFileNode: FileNode = {
+            name: finalName,
+            path: newFilePath,
+            type: 'file',
+            testFile: newTestFile,
+            handle: newFileHandle,
+          };
+
+          setState(prev => {
+            const cloneNode = (node: FileNode): FileNode => {
+              const cloned: FileNode = { ...node };
+              if (node.children) {
+                cloned.children = node.children.map(cloneNode);
+              }
+              return cloned;
+            };
+
+            const newProjectRoot = prev.projectRoot ? cloneNode(prev.projectRoot) : null;
+
+            if (newProjectRoot) {
+              const addToFolder = (node: FileNode): boolean => {
+                if (node.path === parentNode.path) {
+                  if (!node.children) node.children = [];
+                  node.children.push(newFileNode);
+                  node.children.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                  });
+                  return true;
+                }
+                if (node.children) {
+                  for (const child of node.children) {
+                    if (addToFolder(child)) return true;
+                  }
+                }
+                return false;
+              };
+              addToFolder(newProjectRoot);
+            }
+
+            return {
+              ...prev,
+              projectRoot: newProjectRoot,
+              selectedFilePath: newFilePath,
+              testFile: newTestFile,
+              selectedTestIndex: 0,
+              editorTab: 'test',
+              editingFolderHooks: null,
+            };
+          });
+
+          toast.success(`Created: ${finalName}`);
+        } catch (error) {
+          console.error('Failed to create file:', error);
+          toast.error('Failed to create file');
+        }
+      }
+    );
+  }, [showPrompt]);
+
+  // Create a new folder
+  const handleCreateFolder = useCallback((parentNode: FileNode) => {
+    if (!parentNode.folderHandle) {
+      toast.error('Cannot create folder: folder handle not available');
+      return;
+    }
+
+    showPrompt(
+      'Create Folder',
+      [{ name: 'folderName', label: 'Folder name', placeholder: 'Enter folder name', required: true }],
+      async (values) => {
+        const folderName = values.folderName;
+        if (!folderName) return;
+
+        try {
+          // Create the new folder
+          const newFolderHandle = await parentNode.folderHandle!.getDirectoryHandle(folderName, { create: true });
+
+          const newFolderPath = `${parentNode.path}/${folderName}`;
+          const newFolderNode: FileNode = {
+            name: folderName,
+            path: newFolderPath,
+            type: 'folder',
+            children: [],
+            folderHandle: newFolderHandle,
+          };
+
+          setState(prev => {
+            const cloneNode = (node: FileNode): FileNode => {
+              const cloned: FileNode = { ...node };
+              if (node.children) {
+                cloned.children = node.children.map(cloneNode);
+              }
+              return cloned;
+            };
+
+            const newProjectRoot = prev.projectRoot ? cloneNode(prev.projectRoot) : null;
+
+            if (newProjectRoot) {
+              const addToFolder = (node: FileNode): boolean => {
+                if (node.path === parentNode.path) {
+                  if (!node.children) node.children = [];
+                  node.children.push(newFolderNode);
+                  node.children.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                  });
+                  return true;
+                }
+                if (node.children) {
+                  for (const child of node.children) {
+                    if (addToFolder(child)) return true;
+                  }
+                }
+                return false;
+              };
+              addToFolder(newProjectRoot);
+            }
+
+            return {
+              ...prev,
+              projectRoot: newProjectRoot,
+            };
+          });
+
+          toast.success(`Created folder: ${folderName}`);
+        } catch (error) {
+          console.error('Failed to create folder:', error);
+          toast.error('Failed to create folder');
+        }
+      }
+    );
+  }, [showPrompt]);
 
   // Handle workspace changes for test steps
   const handleWorkspaceChange = useCallback((steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => {
@@ -1302,25 +1502,32 @@ export default function App() {
 
   // Add variable
   const handleAddVariable = useCallback(() => {
-    const name = prompt('Variable name:');
-    if (!name) return;
+    showPrompt(
+      'Add Variable',
+      [
+        { name: 'name', label: 'Variable name', placeholder: 'Enter variable name', required: true },
+        { name: 'defaultValue', label: 'Default value', placeholder: 'Enter default value' },
+      ],
+      (values) => {
+        const name = values.name;
+        if (!name) return;
 
-    const defaultValue = prompt('Default value:', '');
-
-    setState(prev => ({
-      ...prev,
-      testFile: {
-        ...prev.testFile,
-        variables: {
-          ...prev.testFile.variables,
-          [name]: {
-            type: 'string',
-            default: defaultValue || '',
+        setState(prev => ({
+          ...prev,
+          testFile: {
+            ...prev.testFile,
+            variables: {
+              ...prev.testFile.variables,
+              [name]: {
+                type: 'string',
+                default: values.defaultValue || '',
+              },
+            },
           },
-        },
-      },
-    }));
-  }, []);
+        }));
+      }
+    );
+  }, [showPrompt]);
 
   // Update variable
   const handleUpdateVariable = useCallback((name: string, value: string) => {
@@ -1490,7 +1697,10 @@ export default function App() {
         };
       });
     } else {
-      // Create new test with steps
+      // Create new test file with recorded steps
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const newFileName = `recorded-${timestamp}.testblocks.json`;
+
       const newTest: TestCase = {
         id: `test-${Date.now()}`,
         name: 'Recorded Test',
@@ -1498,31 +1708,121 @@ export default function App() {
         steps,
         tags: ['recorded'],
       };
-      setState(prev => {
-        const updatedTestFile = { ...prev.testFile, tests: [...prev.testFile.tests, newTest] };
 
-        // Auto-save to project folder if file is open
-        const selectedNode = findNodeByPath(prev.projectRoot, prev.selectedFilePath);
-        if (selectedNode?.handle) {
+      const newTestFile: TestFile = {
+        version: '1.0.0',
+        name: 'Recorded Test Suite',
+        description: `Recorded on ${new Date().toLocaleString()}`,
+        variables: {},
+        tests: [newTest],
+      };
+
+      setState(prev => {
+        // Find the directory to save in
+        let targetDirHandle: FileSystemDirectoryHandle | null = null;
+        let targetDirPath = '';
+
+        // Try to find the parent folder of the currently selected file
+        if (prev.selectedFilePath && prev.projectRoot) {
+          const pathParts = prev.selectedFilePath.split('/');
+          pathParts.pop(); // Remove filename
+          const parentPath = pathParts.join('/');
+
+          if (parentPath) {
+            const parentNode = findNodeByPath(prev.projectRoot, parentPath);
+            if (parentNode?.folderHandle) {
+              targetDirHandle = parentNode.folderHandle;
+              targetDirPath = parentPath;
+            }
+          }
+        }
+
+        // Fall back to project root
+        if (!targetDirHandle && prev.projectRoot?.folderHandle) {
+          targetDirHandle = prev.projectRoot.folderHandle;
+          targetDirPath = prev.projectRoot.path;
+        }
+
+        // If we have a directory, create the new file
+        if (targetDirHandle) {
           (async () => {
             try {
-              const writable = await (selectedNode.handle as FileSystemFileHandle).createWritable();
-              await writable.write(JSON.stringify(updatedTestFile, null, 2));
+              // Create the new file
+              const newFileHandle = await targetDirHandle!.getFileHandle(newFileName, { create: true });
+              const writable = await newFileHandle.createWritable();
+              await writable.write(JSON.stringify(newTestFile, null, 2));
               await writable.close();
-              selectedNode.testFile = updatedTestFile;
-              console.log('[handleStepsRecorded] Saved new recorded test to:', prev.selectedFilePath);
+
+              console.log('[handleStepsRecorded] Created new file:', newFileName);
+
+              // Add the new file to the tree and select it
+              const newFilePath = targetDirPath ? `${targetDirPath}/${newFileName}` : newFileName;
+              const newFileNode: FileNode = {
+                name: newFileName,
+                path: newFilePath,
+                type: 'file',
+                testFile: newTestFile,
+                handle: newFileHandle,
+              };
+
+              // Clone the project root and add the new file
+              const cloneNode = (node: FileNode): FileNode => {
+                const cloned: FileNode = { ...node };
+                if (node.children) {
+                  cloned.children = node.children.map(cloneNode);
+                }
+                return cloned;
+              };
+
+              const newProjectRoot = prev.projectRoot ? cloneNode(prev.projectRoot) : null;
+
+              if (newProjectRoot) {
+                // Find the target folder and add the new file
+                const addFileToFolder = (node: FileNode): boolean => {
+                  if (node.path === targetDirPath || (node.path === node.name && targetDirPath === node.name)) {
+                    if (!node.children) node.children = [];
+                    node.children.push(newFileNode);
+                    // Sort children: folders first, then files alphabetically
+                    node.children.sort((a, b) => {
+                      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                      return a.name.localeCompare(b.name);
+                    });
+                    return true;
+                  }
+                  if (node.children) {
+                    for (const child of node.children) {
+                      if (addFileToFolder(child)) return true;
+                    }
+                  }
+                  return false;
+                };
+
+                addFileToFolder(newProjectRoot);
+
+                // Update state with new file selected
+                setState(s => ({
+                  ...s,
+                  projectRoot: newProjectRoot,
+                  selectedFilePath: newFilePath,
+                  testFile: newTestFile,
+                  selectedTestIndex: 0,
+                  editorTab: 'test',
+                }));
+              }
+
+              toast.success(`Created new test file: ${newFileName}`);
             } catch (error) {
-              console.error('[handleStepsRecorded] Failed to save:', error);
+              console.error('[handleStepsRecorded] Failed to create file:', error);
+              toast.error('Failed to create test file');
             }
           })();
+        } else {
+          toast.warning('No project folder open. Please open a folder first.');
         }
 
         return {
           ...prev,
-          testFile: updatedTestFile,
-          selectedTestIndex: prev.testFile.tests.length,
           showRecordDialog: false,
-          editorTab: 'test',
         };
       });
     }
@@ -1850,6 +2150,8 @@ export default function App() {
                 onSelectFile={handleSelectFile}
                 onSelectFolder={handleSelectFolder}
                 onRefresh={state.projectRoot ? handleRefreshFolder : undefined}
+                onCreateFile={handleCreateFile}
+                onCreateFolder={handleCreateFolder}
               />
             </div>
           ) : (
@@ -2181,6 +2483,19 @@ export default function App() {
         onClose={() => setState(prev => ({ ...prev, showRecordDialog: false }))}
         onStepsRecorded={handleStepsRecorded}
       />
+
+      {promptDialog && (
+        <PromptDialog
+          isOpen={promptDialog.isOpen}
+          title={promptDialog.title}
+          fields={promptDialog.fields}
+          onSubmit={(values) => {
+            promptDialog.onSubmit(values);
+            closePrompt();
+          }}
+          onCancel={closePrompt}
+        />
+      )}
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>

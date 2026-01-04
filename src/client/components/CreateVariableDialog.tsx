@@ -6,12 +6,20 @@ export interface FieldValue {
   value: string;
 }
 
+export interface CreateVariableResult {
+  value: string;
+  type: 'global' | 'file';
+  name: string;
+  fieldName: string; // The field to update with ${name}
+}
+
 interface CreateVariableDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateVariable: (value: string, type: 'global' | 'file', name: string) => void;
+  onCreateVariable: (result: CreateVariableResult) => void;
   fieldValues: FieldValue[];
   blockType: string;
+  blockId: string;
 }
 
 export function CreateVariableDialog({
@@ -20,7 +28,9 @@ export function CreateVariableDialog({
   onCreateVariable,
   fieldValues,
   blockType,
+  blockId,
 }: CreateVariableDialogProps) {
+  // blockId is used for reference but passed via callback
   const [selectedField, setSelectedField] = useState<string | null>(
     fieldValues.length === 1 ? fieldValues[0].fieldName : null
   );
@@ -48,7 +58,12 @@ export function CreateVariableDialog({
 
   const handleCreate = () => {
     if (!selectedField || !variableName.trim()) return;
-    onCreateVariable(selectedValue, variableType, variableName.trim());
+    onCreateVariable({
+      value: selectedValue,
+      type: variableType,
+      name: variableName.trim(),
+      fieldName: selectedField,
+    });
     onClose();
   };
 
