@@ -1,7 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { TestFile, TestResult, FolderHooks } from '../core';
+
+// Read version from package.json
+const packageJsonPath = path.join(__dirname, '../../package.json');
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+const VERSION = packageJson.version || '0.0.0';
 import { TestExecutor } from './executor';
 import { generateHTMLReport, generateJUnitXML, getTimestamp, ReportData } from '../cli/reporters';
 import {
@@ -105,7 +111,12 @@ app.use(express.json({ limit: '10mb' }));
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0' });
+  res.json({ status: 'ok', version: VERSION });
+});
+
+// Version endpoint
+app.get('/api/version', (req, res) => {
+  res.json({ version: VERSION });
 });
 
 // List available plugins (with full block definitions for client registration)

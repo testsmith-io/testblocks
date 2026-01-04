@@ -100,6 +100,8 @@ interface AppState {
   autoSaveStatus: 'idle' | 'saving' | 'saved';
   resultsPanelCollapsed: boolean;
   sidebarCollapsed: boolean;
+  // App info
+  version: string | null;
 }
 
 const initialTestFile: TestFile = {
@@ -261,6 +263,7 @@ export default function App() {
     autoSaveStatus: 'idle',
     resultsPanelCollapsed: false,
     sidebarCollapsed: false,
+    version: null,
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -450,6 +453,20 @@ export default function App() {
 
     tryRestoreLastFolder();
   }, [openDirectoryFromHandle]);
+
+  // Fetch version on startup
+  useEffect(() => {
+    fetch('/api/version')
+      .then(res => res.json())
+      .then(data => {
+        if (data.version) {
+          setState(prev => ({ ...prev, version: data.version }));
+        }
+      })
+      .catch(() => {
+        // Ignore version fetch errors
+      });
+  }, []);
 
   // Fetch and register plugins from server on startup
   useEffect(() => {
@@ -1586,6 +1603,58 @@ export default function App() {
     }
   }, [state.testFile, state.results]);
 
+  // Handle creating a variable from a Blockly block value
+  const handleCreateVariable = useCallback((value: string, type: 'global' | 'file', name: string) => {
+    if (type === 'global') {
+      // Add to global variables
+      const newGlobalVariables = {
+        ...(state.globalVariables || {}),
+        [name]: value,
+      };
+
+      const newGlobalsFileContent: GlobalsFile = {
+        ...state.globalsFileContent,
+        variables: newGlobalVariables,
+      };
+
+      // Save to file asynchronously
+      if (globalsHandleRef.current) {
+        (async () => {
+          try {
+            const writable = await globalsHandleRef.current!.createWritable();
+            await writable.write(JSON.stringify(newGlobalsFileContent, null, 2));
+            await writable.close();
+            console.log('[handleCreateVariable] Saved globals.json');
+          } catch (error) {
+            console.error('[handleCreateVariable] Failed to save globals.json:', error);
+          }
+        })();
+      }
+
+      setState(prev => ({
+        ...prev,
+        globalVariables: newGlobalVariables,
+        globalsFileContent: newGlobalsFileContent,
+      }));
+
+      toast.success(`Created global variable: ${name}`);
+    } else {
+      // Add to file variables
+      setState(prev => ({
+        ...prev,
+        testFile: {
+          ...prev.testFile,
+          variables: {
+            ...prev.testFile.variables,
+            [name]: { default: value },
+          },
+        },
+      }));
+
+      toast.success(`Created file variable: ${name}`);
+    }
+  }, [state.globalVariables, state.globalsFileContent]);
+
   // Render global variables (supports nested objects)
   const renderGlobalVariables = (vars: Record<string, unknown>, prefix = ''): React.ReactNode[] => {
     const items: React.ReactNode[] = [];
@@ -1642,6 +1711,7 @@ export default function App() {
       <header className="header">
         <h1>
           <span>TestBlocks</span>
+          {state.version && <span className="header-version">v{state.version}</span>}
           {(state.selectedFilePath || state.editingFolderHooks) && (
             <span className="header-file-path">
               {state.editingFolderHooks ? (
@@ -2013,6 +2083,7 @@ export default function App() {
               key={`${state.editorTab}-${state.editorTab === 'test' ? selectedTest?.id : 'lifecycle'}-${state.selectedFilePath || state.editingFolderHooks?.path}-${state.pluginsLoaded}`}
               onWorkspaceChange={handleWorkspaceChange}
               onReplaceMatches={handleReplaceMatches}
+              onCreateVariable={handleCreateVariable}
               initialSteps={getCurrentSteps()}
               testName={state.editorTab === 'test' ? selectedTest?.name : getEditorTitle()}
               lifecycleType={state.editorTab !== 'test' ? state.editorTab : undefined}

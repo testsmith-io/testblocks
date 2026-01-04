@@ -26,6 +26,7 @@ program
   .option('-o, --output <dir>', 'Output directory for reports', './testblocks-results')
   .option('-b, --base-url <url>', 'Base URL for relative URLs')
   .option('-v, --var <vars...>', 'Variables in key=value format')
+  .option('-g, --globals <path>', 'Path to globals.json file', './globals.json')
   .option('--fail-fast', 'Stop on first test failure', false)
   .option('-p, --parallel <count>', 'Number of parallel workers', '1')
   .option('--filter <pattern>', 'Only run tests matching pattern')
@@ -45,20 +46,38 @@ program
 
       console.log(`Found ${files.length} test file(s)\n`);
 
-      // Parse variables
-      const variables: Record<string, unknown> = {};
+      // Load globals.json if it exists
+      let globalVariables: Record<string, unknown> = {};
+      const globalsPath = path.resolve(options.globals);
+      if (fs.existsSync(globalsPath)) {
+        try {
+          const globalsContent = fs.readFileSync(globalsPath, 'utf-8');
+          const globals = JSON.parse(globalsContent);
+          if (globals.variables && typeof globals.variables === 'object') {
+            globalVariables = globals.variables;
+          }
+        } catch (e) {
+          console.warn(`Warning: Could not load globals from ${globalsPath}: ${(e as Error).message}`);
+        }
+      }
+
+      // Parse CLI variables (these override globals)
+      const cliVariables: Record<string, unknown> = {};
       if (options.var) {
         for (const v of options.var) {
           const [key, ...valueParts] = v.split('=');
           const value = valueParts.join('=');
           // Try to parse as JSON, otherwise use as string
           try {
-            variables[key] = JSON.parse(value);
+            cliVariables[key] = JSON.parse(value);
           } catch {
-            variables[key] = value;
+            cliVariables[key] = value;
           }
         }
       }
+
+      // Merge variables: globals first, then CLI overrides
+      const variables: Record<string, unknown> = { ...globalVariables, ...cliVariables };
 
       // Create executor options
       const executorOptions: ExecutorOptions = {
@@ -224,7 +243,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.2.0',
+            '@testsmith/testblocks': '^0.3.0',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -252,8 +271,8 @@ program
               },
               {
                 id: 'step-2',
-                type: 'web_expect_title',
-                params: { EXPECTED: 'Example Domain' },
+                type: 'web_assert_title_contains',
+                params: { TEXT: 'Example Domain' },
               },
             ],
             tags: ['web', 'smoke'],

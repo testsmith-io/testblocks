@@ -4,6 +4,7 @@ import { builtInBlocks, TestStep } from '../../core';
 import { registerBlocklyBlocks, createToolbox, workspaceToTestSteps, loadStepsToWorkspace, getTestNameFromWorkspace, getTestDataFromWorkspace } from '../blockly/blockDefinitions';
 import { analyzeSelectedBlocks, registerCustomBlock, updateCustomBlock, CustomBlockConfig, getCustomBlocks, getCustomBlockConfig, isCustomBlock, ExtractedParameter } from '../blockly/customBlockCreator';
 import { CreateBlockDialog, CreateBlockResult } from './CreateBlockDialog';
+import { CreateVariableDialog, FieldValue } from './CreateVariableDialog';
 import { JsonEditorModal } from './JsonEditorModal';
 import { FileNode } from './FileTree';
 import { getPluginBlocks, initializePlugins } from '../plugins';
@@ -35,6 +36,7 @@ interface BlocklyWorkspaceProps {
   onWorkspaceChange: (steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => void;
   onCustomBlockCreated?: (blockType: string) => void;
   onReplaceMatches?: (result: CreateBlockResult, blockType: string) => void;
+  onCreateVariable?: (value: string, type: 'global' | 'file', name: string) => void;
   initialSteps?: unknown[];
   testName?: string;
   lifecycleType?: string; // 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach'
@@ -46,7 +48,7 @@ interface BlocklyWorkspaceProps {
 // Register blocks once globally
 let blocksRegistered = false;
 
-export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onReplaceMatches, initialSteps, testName, lifecycleType, testData, projectRoot, currentFilePath }: BlocklyWorkspaceProps) {
+export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onReplaceMatches, onCreateVariable, initialSteps, testName, lifecycleType, testData, projectRoot, currentFilePath }: BlocklyWorkspaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const isLoadingRef = useRef(false);
@@ -67,12 +69,22 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
   const [jsonEditorBlockId, setJsonEditorBlockId] = useState<string | null>(null);
   const [jsonEditorFieldName, setJsonEditorFieldName] = useState<string>('BODY');
 
+  // Create variable dialog state
+  const [showVariableDialog, setShowVariableDialog] = useState(false);
+  const [variableDialogData, setVariableDialogData] = useState<{
+    fieldValues: FieldValue[];
+    blockType: string;
+  } | null>(null);
+
   // Store callback in ref to avoid re-initialization
   const onChangeRef = useRef(onWorkspaceChange);
   onChangeRef.current = onWorkspaceChange;
 
   const onCustomBlockCreatedRef = useRef(onCustomBlockCreated);
   onCustomBlockCreatedRef.current = onCustomBlockCreated;
+
+  const onCreateVariableRef = useRef(onCreateVariable);
+  onCreateVariableRef.current = onCreateVariable;
 
   // Store initial values in refs - only used on mount
   const initialStepsRef = useRef(initialSteps);
@@ -221,6 +233,15 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
     setJsonEditorOpen(false);
     setJsonEditorBlockId(null);
   }, [jsonEditorBlockId, jsonEditorFieldName]);
+
+  // Handle creating a variable from the dialog
+  const handleCreateVariable = useCallback((value: string, type: 'global' | 'file', name: string) => {
+    if (onCreateVariableRef.current) {
+      onCreateVariableRef.current(value, type, name);
+    }
+    setShowVariableDialog(false);
+    setVariableDialogData(null);
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -534,6 +555,69 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
       }
       Blockly.ContextMenuRegistry.registry.register(editJsonMenuItem);
 
+      // Create variable from value context menu
+      const createVariableMenuItem = {
+        displayText: () => 'Create Variable from Value...',
+        preconditionFn: (scope: { block?: Blockly.Block }) => {
+          // Show on blocks that have editable text fields with values
+          if (scope.block && scope.block.type !== 'test_case' && scope.block.type !== 'data_driven_test') {
+            // Check if block has any text input fields with non-empty values
+            const fields = scope.block.inputList.flatMap(input =>
+              input.fieldRow.filter(field =>
+                field instanceof Blockly.FieldTextInput &&
+                field.getValue() &&
+                String(field.getValue()).trim() !== ''
+              )
+            );
+            return fields.length > 0 ? 'enabled' : 'hidden';
+          }
+          return 'hidden';
+        },
+        callback: (scope: { block?: Blockly.Block }) => {
+          if (!scope.block) return;
+
+          // Collect all text field values from the block
+          const fieldValues: FieldValue[] = [];
+          for (const input of scope.block.inputList) {
+            for (const field of input.fieldRow) {
+              if (field instanceof Blockly.FieldTextInput) {
+                const value = String(field.getValue()).trim();
+                if (value) {
+                  fieldValues.push({
+                    fieldName: field.name || 'value',
+                    displayName: field.name?.replace(/_/g, ' ').toLowerCase() || 'value',
+                    value,
+                  });
+                }
+              }
+            }
+          }
+
+          if (fieldValues.length === 0) {
+            toast.warning('No values found in this block');
+            return;
+          }
+
+          // Open the dialog
+          setVariableDialogData({
+            fieldValues,
+            blockType: scope.block.type,
+          });
+          setShowVariableDialog(true);
+        },
+        scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+        id: 'create_variable_from_value',
+        weight: 100,
+      };
+
+      // Register the create variable menu item
+      try {
+        Blockly.ContextMenuRegistry.registry.unregister('create_variable_from_value');
+      } catch {
+        // Item not registered yet, that's fine
+      }
+      Blockly.ContextMenuRegistry.registry.register(createVariableMenuItem);
+
       // Load initial steps - use refs to get initial values
       isLoadingRef.current = true;
       const steps = initialStepsRef.current;
@@ -647,6 +731,18 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
         initialValue={jsonEditorValue}
         title={jsonEditorFieldName === 'HEADERS' ? 'Edit Headers JSON' : 'Edit JSON Body'}
       />
+      {variableDialogData && (
+        <CreateVariableDialog
+          isOpen={showVariableDialog}
+          onClose={() => {
+            setShowVariableDialog(false);
+            setVariableDialogData(null);
+          }}
+          onCreateVariable={handleCreateVariable}
+          fieldValues={variableDialogData.fieldValues}
+          blockType={variableDialogData.blockType}
+        />
+      )}
     </>
   );
 }
