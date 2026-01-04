@@ -171,10 +171,28 @@ describe('Reporters', () => {
     });
 
     it('should include summary statistics', () => {
+      // Note: HTML report recalculates stats from testFiles, not from summary object
       const data: ReportData = {
         timestamp: '2024-01-15T12:00:00.000Z',
         summary: { totalTests: 10, passed: 8, failed: 2, duration: 5000 },
-        testFiles: [],
+        testFiles: [
+          {
+            file: 'test1.json',
+            testFile: { name: 'Suite1', testCases: [] },
+            results: [
+              { testName: 'Test 1', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 2', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 3', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 4', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 5', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 6', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 7', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 8', status: 'passed', duration: 500, steps: [] },
+              { testName: 'Test 9', status: 'failed', duration: 500, steps: [] },
+              { testName: 'Test 10', status: 'failed', duration: 500, steps: [] },
+            ],
+          },
+        ],
       };
 
       const html = generateHTMLReport(data);
@@ -269,8 +287,9 @@ describe('Reporters', () => {
 
       const html = generateHTMLReport(data);
 
-      expect(html).toContain('web_navigate');
-      expect(html).toContain('web_click');
+      // Step types are formatted (web_navigate -> Navigate, web_click -> Click)
+      expect(html).toContain('Navigate');
+      expect(html).toContain('Click');
       expect(html).toContain('2 steps');
     });
 
@@ -314,7 +333,7 @@ describe('Reporters', () => {
       const html = generateHTMLReport(data);
 
       expect(html).toContain('Assertion failed');
-      expect(html).toContain('class="error-details"');
+      expect(html).toContain('class="error-message"');
     });
   });
 
