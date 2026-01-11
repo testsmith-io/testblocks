@@ -202,10 +202,22 @@ program
       let hasFailures = false;
 
       for (const file of files) {
-        console.log(`Running: ${path.basename(file)}`);
+        // Skip _hooks.testblocks.json files - these are folder hooks, not test files
+        const basename = path.basename(file);
+        if (basename === '_hooks.testblocks.json') {
+          continue;
+        }
+
+        console.log(`Running: ${basename}`);
 
         const content = fs.readFileSync(file, 'utf-8');
         const testFile = JSON.parse(content) as TestFile;
+
+        // Skip files that have no tests array (e.g., hooks-only files)
+        if (!testFile.tests || !Array.isArray(testFile.tests)) {
+          console.log('  (no tests in file)\n');
+          continue;
+        }
 
         // Apply filter if specified
         if (options.filter) {
@@ -268,7 +280,15 @@ program
       let hasErrors = false;
 
       for (const file of files) {
-        console.log(`Validating: ${path.basename(file)}`);
+        const basename = path.basename(file);
+
+        // Skip _hooks.testblocks.json files from validation (they're hooks, not test files)
+        if (basename === '_hooks.testblocks.json') {
+          console.log(`Skipping: ${basename} (folder hooks file)`);
+          continue;
+        }
+
+        console.log(`Validating: ${basename}`);
 
         try {
           const content = fs.readFileSync(file, 'utf-8');
@@ -281,7 +301,8 @@ program
             console.log('  ✗ Invalid');
             errors.forEach(err => console.log(`    - ${err}`));
           } else {
-            console.log(`  ✓ Valid (${testFile.tests.length} tests)`);
+            const testCount = testFile.tests?.length || 0;
+            console.log(`  ✓ Valid (${testCount} tests)`);
           }
         } catch (error) {
           hasErrors = true;
@@ -350,7 +371,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.0',
+            '@testsmith/testblocks': '^0.8.1',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -539,10 +560,21 @@ program
       }
 
       for (const file of files) {
-        console.log(`\n${path.basename(file)}:`);
+        // Skip _hooks.testblocks.json files
+        const basename = path.basename(file);
+        if (basename === '_hooks.testblocks.json') {
+          continue;
+        }
+
+        console.log(`\n${basename}:`);
 
         const content = fs.readFileSync(file, 'utf-8');
         const testFile = JSON.parse(content) as TestFile;
+
+        if (!testFile.tests || !Array.isArray(testFile.tests)) {
+          console.log('  (no tests in file)');
+          continue;
+        }
 
         testFile.tests.forEach((test, index) => {
           const tags = test.tags?.length ? ` [${test.tags.join(', ')}]` : '';
