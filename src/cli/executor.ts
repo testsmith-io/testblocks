@@ -128,7 +128,7 @@ export class TestExecutor {
         await this.runSteps(steps, baseContext, 'beforeAll');
       }
 
-      // Run each test
+      // Run each test - pass baseContext variables so beforeAll state persists
       for (const test of testFile.tests) {
         // Check if test has data-driven sets
         if (test.data && test.data.length > 0) {
@@ -139,13 +139,14 @@ export class TestExecutor {
               test,
               testFile,
               dataSet,
-              i
+              i,
+              baseContext.variables
             );
             results.push(result);
           }
         } else {
           // Run test once without data
-          const result = await this.runTest(test, testFile);
+          const result = await this.runTest(test, testFile, baseContext.variables);
           results.push(result);
         }
       }
@@ -181,7 +182,8 @@ export class TestExecutor {
     test: TestCase,
     testFile: TestFile,
     dataSet: TestDataSet,
-    dataIndex: number
+    dataIndex: number,
+    sharedVariables?: Map<string, unknown>
   ): Promise<TestResult> {
     const testName = dataSet.name
       ? `${test.name} [${dataSet.name}]`
@@ -199,6 +201,17 @@ export class TestExecutor {
       currentData: dataSet,
       dataIndex,
     };
+
+    // Merge shared variables from beforeAll (if any)
+    if (sharedVariables) {
+      for (const [key, value] of sharedVariables) {
+        if (!context.variables.has(key) || context.variables.get(key) === '' || context.variables.get(key) === undefined) {
+          context.variables.set(key, value);
+        } else if (key.startsWith('__')) {
+          context.variables.set(key, value);
+        }
+      }
+    }
 
     // Inject data values into variables
     for (const [key, value] of Object.entries(dataSet.values)) {
@@ -287,7 +300,7 @@ export class TestExecutor {
     };
   }
 
-  async runTest(test: TestCase, testFile: TestFile): Promise<TestResult> {
+  async runTest(test: TestCase, testFile: TestFile, sharedVariables?: Map<string, unknown>): Promise<TestResult> {
     console.log(`  Running: ${test.name}`);
 
     const startedAt = new Date().toISOString();
@@ -295,6 +308,19 @@ export class TestExecutor {
     const stepResults: StepResult[] = [];
 
     const context = this.createBaseContext(testFile.variables);
+
+    // Merge shared variables from beforeAll (if any)
+    if (sharedVariables) {
+      for (const [key, value] of sharedVariables) {
+        // Only copy if not already set (don't override file-level defaults)
+        if (!context.variables.has(key) || context.variables.get(key) === '' || context.variables.get(key) === undefined) {
+          context.variables.set(key, value);
+        } else if (key.startsWith('__')) {
+          // Always copy internal state variables like __requestHeaders
+          context.variables.set(key, value);
+        }
+      }
+    }
 
     for (const plugin of this.plugins.values()) {
       if (plugin.hooks?.beforeTest) {
