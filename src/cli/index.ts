@@ -8,6 +8,32 @@ import { TestFile, TestResult, ProcedureDefinition } from '../core';
 import { TestExecutor, ExecutorOptions } from './executor';
 import { ConsoleReporter, JUnitReporter, JSONReporter, HTMLReporter, Reporter } from './reporters';
 import { startServer } from '../server/startServer';
+import { setPluginsDirectory, loadAllPlugins, initializeServerPlugins } from '../server/plugins';
+import { setGlobalsDirectory, loadAllSnippets } from '../server/globals';
+
+/**
+ * Get the package version from package.json
+ */
+function getVersion(): string {
+  try {
+    // Try to find package.json relative to the compiled CLI
+    const possiblePaths = [
+      path.join(__dirname, '../../package.json'),      // dist/cli -> package.json
+      path.join(__dirname, '../../../package.json'),   // nested node_modules
+    ];
+    for (const pkgPath of possiblePaths) {
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (pkg.name === '@testsmith/testblocks' && pkg.version) {
+          return pkg.version;
+        }
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+  return '0.0.0';
+}
 
 /**
  * Search up the directory tree for globals.json starting from the given directory
@@ -27,12 +53,30 @@ function findGlobalsFile(startDir: string): string | null {
   return null;
 }
 
+/**
+ * Search up the directory tree for a plugins directory starting from the given directory
+ */
+function findPluginsDir(startDir: string): string | null {
+  let currentDir = path.resolve(startDir);
+  const root = path.parse(currentDir).root;
+
+  while (currentDir !== root) {
+    const pluginsPath = path.join(currentDir, 'plugins');
+    if (fs.existsSync(pluginsPath) && fs.statSync(pluginsPath).isDirectory()) {
+      return pluginsPath;
+    }
+    currentDir = path.dirname(currentDir);
+  }
+
+  return null;
+}
+
 const program = new Command();
 
 program
   .name('testblocks')
   .description('CLI runner for TestBlocks visual test automation')
-  .version('1.0.0');
+  .version(getVersion());
 
 program
   .command('run')
@@ -45,6 +89,7 @@ program
   .option('-b, --base-url <url>', 'Base URL for relative URLs')
   .option('-v, --var <vars...>', 'Variables in key=value format')
   .option('-g, --globals <path>', 'Path to globals.json file', './globals.json')
+  .option('--plugins-dir <dir>', 'Plugins directory (auto-discovered if not specified)')
   .option('--fail-fast', 'Stop on first test failure', false)
   .option('-p, --parallel <count>', 'Number of parallel workers', '1')
   .option('--filter <pattern>', 'Only run tests matching pattern')
@@ -88,6 +133,38 @@ program
         } catch (e) {
           console.warn(`Warning: Could not load globals from ${globalsPath}: ${(e as Error).message}`);
         }
+      }
+
+      // Load plugins - search up directory tree from first test file if not explicitly specified
+      let pluginsDir = options.pluginsDir ? path.resolve(options.pluginsDir) : null;
+
+      // If plugins dir not specified, auto-discover from test file location or globals location
+      if (!pluginsDir && files.length > 0) {
+        const testDir = path.dirname(files[0]);
+        pluginsDir = findPluginsDir(testDir);
+      }
+
+      // Also check next to globals.json if still not found
+      if (!pluginsDir && fs.existsSync(globalsPath)) {
+        const globalsDir = path.dirname(globalsPath);
+        const pluginsDirNextToGlobals = path.join(globalsDir, 'plugins');
+        if (fs.existsSync(pluginsDirNextToGlobals) && fs.statSync(pluginsDirNextToGlobals).isDirectory()) {
+          pluginsDir = pluginsDirNextToGlobals;
+        }
+      }
+
+      // Load plugins if directory found
+      if (pluginsDir && fs.existsSync(pluginsDir)) {
+        setPluginsDirectory(pluginsDir);
+        await loadAllPlugins();
+        initializeServerPlugins();
+      }
+
+      // Load snippets from the globals directory (snippets/ folder next to globals.json)
+      if (fs.existsSync(globalsPath)) {
+        const globalsDir = path.dirname(globalsPath);
+        setGlobalsDirectory(globalsDir);
+        loadAllSnippets();
       }
 
       // Parse CLI variables (these override globals)
@@ -273,7 +350,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.7.0',
+            '@testsmith/testblocks': '^0.8.0',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
