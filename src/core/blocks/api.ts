@@ -2,6 +2,7 @@ import { BlockDefinition, ExecutionContext } from '../types';
 import { JSONPath } from 'jsonpath-plus';
 import xpath from 'xpath';
 import { DOMParser } from 'xmldom';
+import { handleAssertion } from './assertions';
 
 // API Testing Blocks
 export const apiBlocks: BlockDefinition[] = [
@@ -292,9 +293,13 @@ export const apiBlocks: BlockDefinition[] = [
       }
       const expectedStatus = params.STATUS as number;
 
-      if (response.status !== expectedStatus) {
-        throw new Error(`Expected status ${expectedStatus} but got ${response.status}`);
-      }
+      handleAssertion(
+        context,
+        response.status === expectedStatus,
+        `Expected status ${expectedStatus} but got ${response.status}`,
+        { stepType: 'api_assert_status', expected: expectedStatus, actual: response.status }
+      );
+
       context.logger.info(`✓ Status is ${expectedStatus}`);
       return {
         _summary: `✓ Status ${response.status} === ${expectedStatus}`,
@@ -327,11 +332,13 @@ export const apiBlocks: BlockDefinition[] = [
       const actualValue = path ? getValueByPath(response.body, path) : response.body;
       const actualStr = typeof actualValue === 'string' ? actualValue : JSON.stringify(actualValue);
 
-      if (!actualStr.includes(expectedValue)) {
-        throw new Error(
-          `Expected ${path || 'body'} to contain "${expectedValue}" but got "${actualStr}"`
-        );
-      }
+      handleAssertion(
+        context,
+        actualStr.includes(expectedValue),
+        `Expected ${path || 'body'} to contain "${expectedValue}" but got "${actualStr}"`,
+        { stepType: 'api_assert_body_contains', expected: expectedValue, actual: actualStr }
+      );
+
       context.logger.info(`✓ ${path || 'body'} contains "${expectedValue}"`);
       return {
         _summary: `✓ ${path || 'body'} contains "${expectedValue}"`,

@@ -88,6 +88,10 @@ function formatBlockLabel(type: string): string {
   if (parts[0] === 'snippet') {
     return parts.slice(1).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
   }
+  // Format custom/procedure blocks nicely: 'custom_performlogin' -> 'Performlogin'
+  if (parts[0] === 'custom') {
+    return parts.slice(1).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+  }
   // Special handling for test case blocks
   if (type === 'test_case') {
     return 'Test Case:';
@@ -180,6 +184,8 @@ export function createToolbox(blocks: BlockDefinition[]): Blockly.utils.toolbox.
     categories.set(block.category, existing);
   });
 
+  console.log('[createToolbox] Categories found:', Array.from(categories.keys()));
+
   // Build toolbox with separators
   const contents: Blockly.utils.toolbox.ToolboxItemInfo[] = [];
 
@@ -231,12 +237,14 @@ export function createToolbox(blocks: BlockDefinition[]): Blockly.utils.toolbox.
   });
 
   // 5. Add separator before custom categories (if any custom exist)
+  console.log('[createToolbox] Custom categories to add:', customCats.map(([name, blocks]) => `${name} (${blocks.length} blocks: ${blocks.map(b => b.type).join(', ')})`));
   if (customCats.length > 0) {
     contents.push({ kind: 'sep' } as Blockly.utils.toolbox.ToolboxItemInfo);
   }
 
   // 6. Add custom/snippet categories
   customCats.forEach(([categoryName, categoryBlocks]) => {
+    console.log(`[createToolbox] Adding category "${categoryName}" with blocks:`, categoryBlocks.map(b => b.type));
     contents.push({
       kind: 'category',
       name: categoryName,
@@ -385,6 +393,99 @@ export function getTestDataFromWorkspace(workspace: Blockly.Workspace): Array<{ 
   return undefined;
 }
 
+// Get soft assertions setting from workspace (from test_case or test_case_data_driven block)
+export function getSoftAssertionsFromWorkspace(workspace: Blockly.Workspace): boolean | undefined {
+  const topBlocks = workspace.getTopBlocks(true);
+  for (const block of topBlocks) {
+    if (block.type === 'test_case' || block.type === 'test_case_data_driven') {
+      const softAssertionsField = block.getField('SOFT_ASSERTIONS');
+      if (softAssertionsField) {
+        return softAssertionsField.getValue() === 'TRUE';
+      }
+    }
+  }
+  return undefined;
+}
+
+// Helper to create a block from a step definition, including connected value blocks
+function createBlockFromStep(
+  workspace: Blockly.Workspace,
+  stepObj: { type: string; id?: string; params?: Record<string, unknown>; children?: Record<string, unknown[]> }
+): Blockly.Block | null {
+  try {
+    const block = workspace.newBlock(stepObj.type);
+
+    // Set field values and handle connected value blocks
+    if (stepObj.params) {
+      Object.entries(stepObj.params).forEach(([name, value]) => {
+        // Check if this is a connected block (has type and id properties)
+        if (value && typeof value === 'object' && 'type' in value && 'id' in value) {
+          // This is a connected value block - create and connect it
+          const connectedBlock = createBlockFromStep(
+            workspace,
+            value as { type: string; id?: string; params?: Record<string, unknown>; children?: Record<string, unknown[]> }
+          );
+          if (connectedBlock) {
+            connectedBlock.initSvg();
+            // Find the value input and connect the block
+            const input = block.getInput(name);
+            if (input && input.connection && connectedBlock.outputConnection) {
+              input.connection.connect(connectedBlock.outputConnection);
+            }
+          }
+        } else {
+          // Regular field value
+          const field = block.getField(name);
+          if (field) {
+            field.setValue(value);
+          }
+        }
+      });
+    }
+
+    // Handle statement children (for control flow blocks)
+    if (stepObj.children) {
+      Object.entries(stepObj.children).forEach(([inputName, childSteps]) => {
+        const input = block.getInput(inputName);
+        if (input && input.connection && Array.isArray(childSteps)) {
+          const childBlocks: Blockly.Block[] = [];
+          childSteps.forEach((childStep) => {
+            const childBlock = createBlockFromStep(
+              workspace,
+              childStep as { type: string; id?: string; params?: Record<string, unknown>; children?: Record<string, unknown[]> }
+            );
+            if (childBlock) {
+              childBlock.initSvg();
+              childBlocks.push(childBlock);
+            }
+          });
+
+          // Connect child blocks to each other
+          childBlocks.forEach((childBlock, index) => {
+            if (index > 0) {
+              const previousBlock = childBlocks[index - 1];
+              if (previousBlock.nextConnection && childBlock.previousConnection) {
+                previousBlock.nextConnection.connect(childBlock.previousConnection);
+              }
+            }
+          });
+
+          // Connect first child to input
+          if (childBlocks.length > 0 && childBlocks[0].previousConnection) {
+            input.connection.connect(childBlocks[0].previousConnection);
+          }
+        }
+      });
+    }
+
+    block.initSvg();
+    return block;
+  } catch (e) {
+    console.error(`Failed to create block of type: ${stepObj.type}`, e);
+    return null;
+  }
+}
+
 function blockToStep(block: Blockly.Block): unknown {
   const step: Record<string, unknown> = {
     id: block.id,
@@ -474,7 +575,8 @@ export function loadStepsToWorkspace(
   steps: unknown[],
   testName?: string,
   lifecycleType?: string,
-  testData?: Array<{ name?: string; values: Record<string, unknown> }>
+  testData?: Array<{ name?: string; values: Record<string, unknown> }>,
+  softAssertions?: boolean
 ): void {
   workspace.clear();
 
@@ -484,29 +586,14 @@ export function loadStepsToWorkspace(
     const containerBlock = workspace.newBlock(containerType);
     containerBlock.initSvg();
 
-    // Create all step blocks
+    // Create all step blocks using the helper function
     const stepBlocks: Blockly.Block[] = [];
 
     steps.forEach((step: unknown) => {
       const stepObj = step as { type: string; id?: string; params?: Record<string, unknown>; children?: Record<string, unknown[]> };
-
-      try {
-        const block = workspace.newBlock(stepObj.type);
-
-        // Set field values
-        if (stepObj.params) {
-          Object.entries(stepObj.params).forEach(([name, value]) => {
-            const field = block.getField(name);
-            if (field) {
-              field.setValue(value);
-            }
-          });
-        }
-
-        block.initSvg();
+      const block = createBlockFromStep(workspace, stepObj);
+      if (block) {
         stepBlocks.push(block);
-      } catch (e) {
-        console.error(`Failed to create block of type: ${stepObj.type}`, e);
       }
     });
 
@@ -547,6 +634,11 @@ export function loadStepsToWorkspace(
     if (nameField && testName) {
       nameField.setValue(testName);
     }
+    // Set SOFT_ASSERTIONS field
+    const softAssertionsField = testCaseBlock.getField('SOFT_ASSERTIONS');
+    if (softAssertionsField && softAssertions !== undefined) {
+      softAssertionsField.setValue(softAssertions ? 'TRUE' : 'FALSE');
+    }
     // Set DATA field for data-driven tests
     if (isDataDriven) {
       const dataField = testCaseBlock.getField('DATA');
@@ -566,6 +658,11 @@ export function loadStepsToWorkspace(
   if (nameField && testName) {
     nameField.setValue(testName);
   }
+  // Set SOFT_ASSERTIONS field
+  const softAssertionsField = testCaseBlock.getField('SOFT_ASSERTIONS');
+  if (softAssertionsField && softAssertions !== undefined) {
+    softAssertionsField.setValue(softAssertions ? 'TRUE' : 'FALSE');
+  }
   // Set DATA field for data-driven tests
   if (isDataDriven) {
     const dataField = testCaseBlock.getField('DATA');
@@ -575,29 +672,14 @@ export function loadStepsToWorkspace(
   }
   testCaseBlock.initSvg();
 
-  // Create all step blocks
+  // Create all step blocks using the helper function
   const stepBlocks: Blockly.Block[] = [];
 
   steps.forEach((step: unknown) => {
     const stepObj = step as { type: string; id?: string; params?: Record<string, unknown>; children?: Record<string, unknown[]> };
-
-    try {
-      const block = workspace.newBlock(stepObj.type);
-
-      // Set field values
-      if (stepObj.params) {
-        Object.entries(stepObj.params).forEach(([name, value]) => {
-          const field = block.getField(name);
-          if (field) {
-            field.setValue(value);
-          }
-        });
-      }
-
-      block.initSvg();
+    const block = createBlockFromStep(workspace, stepObj);
+    if (block) {
       stepBlocks.push(block);
-    } catch (e) {
-      console.error(`Failed to create block of type: ${stepObj.type}`, e);
     }
   });
 

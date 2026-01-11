@@ -4,10 +4,28 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
-import { TestFile, TestResult } from '../core';
+import { TestFile, TestResult, ProcedureDefinition } from '../core';
 import { TestExecutor, ExecutorOptions } from './executor';
 import { ConsoleReporter, JUnitReporter, JSONReporter, HTMLReporter, Reporter } from './reporters';
 import { startServer } from '../server/startServer';
+
+/**
+ * Search up the directory tree for globals.json starting from the given directory
+ */
+function findGlobalsFile(startDir: string): string | null {
+  let currentDir = path.resolve(startDir);
+  const root = path.parse(currentDir).root;
+
+  while (currentDir !== root) {
+    const globalsPath = path.join(currentDir, 'globals.json');
+    if (fs.existsSync(globalsPath)) {
+      return globalsPath;
+    }
+    currentDir = path.dirname(currentDir);
+  }
+
+  return null;
+}
 
 const program = new Command();
 
@@ -46,15 +64,26 @@ program
 
       console.log(`Found ${files.length} test file(s)\n`);
 
-      // Load globals.json if it exists
+      // Load globals.json - search up directory tree from first test file if not explicitly specified
       let globalVariables: Record<string, unknown> = {};
-      const globalsPath = path.resolve(options.globals);
+      let globalProcedures: Record<string, ProcedureDefinition> = {};
+      let globalsPath = path.resolve(options.globals);
+
+      // If default globals path doesn't exist, search up from first test file
+      if (!fs.existsSync(globalsPath) && options.globals === './globals.json' && files.length > 0) {
+        const testDir = path.dirname(files[0]);
+        globalsPath = findGlobalsFile(testDir) || globalsPath;
+      }
+
       if (fs.existsSync(globalsPath)) {
         try {
           const globalsContent = fs.readFileSync(globalsPath, 'utf-8');
           const globals = JSON.parse(globalsContent);
           if (globals.variables && typeof globals.variables === 'object') {
             globalVariables = globals.variables;
+          }
+          if (globals.procedures && typeof globals.procedures === 'object') {
+            globalProcedures = globals.procedures as Record<string, ProcedureDefinition>;
           }
         } catch (e) {
           console.warn(`Warning: Could not load globals from ${globalsPath}: ${(e as Error).message}`);
@@ -85,6 +114,7 @@ program
         timeout: parseInt(options.timeout, 10),
         baseUrl: options.baseUrl,
         variables,
+        procedures: globalProcedures,
       };
 
       // Create reporter
@@ -243,7 +273,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.6.0',
+            '@testsmith/testblocks': '^0.7.0',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -351,6 +381,58 @@ Thumbs.db
 `;
       fs.writeFileSync(gitignorePath, gitignore);
       console.log('  Created: .gitignore');
+    }
+
+    // Create GitHub Actions workflow
+    const workflowDir = path.join(projectDir, '.github', 'workflows');
+    if (!fs.existsSync(workflowDir)) {
+      fs.mkdirSync(workflowDir, { recursive: true });
+      console.log('  Created: .github/workflows/');
+    }
+
+    const workflowPath = path.join(workflowDir, 'testblocks.yml');
+    if (!fs.existsSync(workflowPath)) {
+      const workflow = `name: TestBlocks Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run tests
+        run: npm test
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: reports/
+          retention-days: 30
+`;
+      fs.writeFileSync(workflowPath, workflow);
+      console.log('  Created: .github/workflows/testblocks.yml');
     }
 
     console.log('\n✓ Project initialized successfully!\n');

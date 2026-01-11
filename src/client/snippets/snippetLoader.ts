@@ -29,6 +29,10 @@ const loadedSnippets: Map<string, SnippetDefinition> = new Map();
 const snippetBlocks: BlockDefinition[] = [];
 let snippetsLoaded = false;
 
+// Track loaded procedures from globals.json
+const loadedProcedures: Map<string, SnippetDefinition> = new Map();
+const procedureBlocks: BlockDefinition[] = [];
+
 /**
  * Convert a snippet definition to a BlockDefinition for Blockly
  */
@@ -54,7 +58,32 @@ function snippetToBlockDefinition(snippet: SnippetDefinition): BlockDefinition {
 }
 
 /**
- * Load snippets from the server API
+ * Convert a procedure definition to a BlockDefinition for Blockly
+ * Procedures use 'custom_' prefix to match how they're registered on server
+ */
+function procedureToBlockDefinition(procedure: SnippetDefinition): BlockDefinition {
+  const blockType = `custom_${procedure.name.toLowerCase().replace(/\s+/g, '_')}`;
+
+  return {
+    type: blockType,
+    category: procedure.category || 'Custom',
+    color: '#607D8B',
+    tooltip: procedure.description || `Custom block: ${procedure.name}`,
+    inputs: (procedure.params || []).map(param => ({
+      name: param.name.toUpperCase(),
+      type: 'field' as const,
+      fieldType: param.type === 'number' ? 'number' as const : 'text' as const,
+      default: param.default,
+    })),
+    previousStatement: true,
+    nextStatement: true,
+    // Note: execute function is handled server-side
+    execute: async () => ({ _summary: `Procedure: ${procedure.name}` }),
+  };
+}
+
+/**
+ * Load snippets and procedures from the server API
  */
 export async function loadSnippetsFromServer(): Promise<void> {
   if (snippetsLoaded) {
@@ -70,6 +99,7 @@ export async function loadSnippetsFromServer(): Promise<void> {
 
     const data = await response.json();
     const snippets: SnippetDefinition[] = data.snippets || [];
+    const procedures: SnippetDefinition[] = data.procedures || [];
 
     // Register each snippet as a block
     snippets.forEach(snippet => {
@@ -81,8 +111,20 @@ export async function loadSnippetsFromServer(): Promise<void> {
       }
     });
 
+    // Register each procedure from globals.json as a block
+    console.log(`[snippetLoader] Found ${procedures.length} procedures from server:`, procedures.map(p => p.name));
+    procedures.forEach(procedure => {
+      if (!loadedProcedures.has(procedure.name)) {
+        loadedProcedures.set(procedure.name, procedure);
+        const blockDef = procedureToBlockDefinition(procedure);
+        procedureBlocks.push(blockDef);
+        console.log(`[snippetLoader] Loaded procedure block: ${blockDef.type} (category: ${blockDef.category}, ${procedure.stepCount} steps)`);
+      }
+    });
+    console.log(`[snippetLoader] Total procedure blocks: ${procedureBlocks.length}`);
+
     snippetsLoaded = true;
-    console.log(`Loaded ${snippets.length} snippet(s) from server`);
+    console.log(`Loaded ${snippets.length} snippet(s) and ${procedures.length} procedure(s) from server`);
   } catch (error) {
     console.error('Failed to load snippets from server:', error);
   }
@@ -92,7 +134,16 @@ export async function loadSnippetsFromServer(): Promise<void> {
  * Get all blocks from loaded snippets
  */
 export function getSnippetBlocks(): BlockDefinition[] {
-  return [...snippetBlocks];
+  // Include both snippets and procedures from globals.json
+  console.log(`[snippetLoader] getSnippetBlocks called: ${snippetBlocks.length} snippets, ${procedureBlocks.length} procedures`);
+  return [...snippetBlocks, ...procedureBlocks];
+}
+
+/**
+ * Get all blocks from loaded procedures (from globals.json)
+ */
+export function getProcedureBlocks(): BlockDefinition[] {
+  return [...procedureBlocks];
 }
 
 /**
@@ -110,11 +161,13 @@ export function areSnippetsLoaded(): boolean {
 }
 
 /**
- * Clear all loaded snippets (useful for testing/refresh)
+ * Clear all loaded snippets and procedures (useful for testing/refresh)
  */
 export function clearSnippets(): void {
   loadedSnippets.clear();
   snippetBlocks.length = 0;
+  loadedProcedures.clear();
+  procedureBlocks.length = 0;
   snippetsLoaded = false;
 }
 

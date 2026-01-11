@@ -10,7 +10,9 @@ import {
   Plugin,
   ProcedureDefinition,
   TestDataSet,
+  BlockDefinition,
   getBlock,
+  registerBlock,
 } from '../core';
 
 export interface ExecutorOptions {
@@ -19,6 +21,7 @@ export interface ExecutorOptions {
   baseUrl?: string;
   variables?: Record<string, unknown>;
   plugins?: Plugin[];
+  procedures?: Record<string, ProcedureDefinition>;
 }
 
 export class TestExecutor {
@@ -40,6 +43,14 @@ export class TestExecutor {
       options.plugins.forEach(plugin => {
         this.plugins.set(plugin.name, plugin);
       });
+    }
+
+    // Register project-level procedures from options
+    if (options.procedures) {
+      for (const [name, procedure] of Object.entries(options.procedures)) {
+        this.procedures.set(name, procedure);
+      }
+      this.registerCustomBlocksFromProcedures(options.procedures);
     }
   }
 
@@ -103,6 +114,8 @@ export class TestExecutor {
       for (const [name, procedure] of Object.entries(testFile.procedures)) {
         this.procedures.set(name, procedure);
       }
+      // Also register them as custom blocks so custom_xxx blocks work
+      this.registerCustomBlocksFromProcedures(testFile.procedures);
     }
 
     // Create base context for hooks
@@ -153,7 +166,7 @@ export class TestExecutor {
     return {
       variables: new Map(Object.entries({
         ...this.resolveVariableDefaults(fileVariables),
-        ...this.options.variables,
+        ...this.resolveVariableDefaults(this.options.variables),
       })),
       results: [],
       browser: this.browser,
@@ -407,6 +420,62 @@ export class TestExecutor {
     return resolved;
   }
 
+  private registerCustomBlocksFromProcedures(procedures: Record<string, ProcedureDefinition>): void {
+    Object.entries(procedures).forEach(([_name, proc]) => {
+      if (!proc.steps || proc.steps.length === 0) return;
+
+      const blockType = `custom_${proc.name.toLowerCase().replace(/\s+/g, '_')}`;
+
+      // Check if already registered
+      if (getBlock(blockType)) return;
+
+      const blockDef: BlockDefinition = {
+        type: blockType,
+        category: 'Custom',
+        color: '#607D8B',
+        tooltip: proc.description || `Custom block: ${proc.name}`,
+        inputs: (proc.params || []).map(param => ({
+          name: param.name.toUpperCase(),
+          type: 'field' as const,
+          fieldType: param.type === 'number' ? 'number' as const : 'text' as const,
+          default: param.default,
+        })),
+        previousStatement: true,
+        nextStatement: true,
+        execute: async (params, context) => {
+          context.logger.info(`Executing custom block: ${proc.name}`);
+
+          // Set procedure parameters in context.variables so ${paramName} references work
+          // Resolve any ${variable} placeholders in the parameter values first
+          (proc.params || []).forEach(p => {
+            const paramKey = p.name.toUpperCase();
+            let value = params[paramKey];
+            if (value !== undefined) {
+              // Resolve variable placeholders like ${email} from context
+              if (typeof value === 'string') {
+                value = this.resolveVariablePlaceholders(value, context);
+              }
+              context.variables.set(p.name, value);
+            }
+          });
+
+          // Execute the procedure's steps directly
+          const steps = this.extractStepsFromBlocklyState(proc.steps);
+          for (const step of steps) {
+            const result = await this.runStep(step, context);
+            if (result.status !== 'passed') {
+              throw new Error(`Procedure ${proc.name} failed: ${result.error?.message}`);
+            }
+          }
+
+          return { customBlock: true, name: proc.name };
+        },
+      };
+
+      registerBlock(blockDef);
+    });
+  }
+
   private extractStepsFromBlocklyState(state: unknown): TestStep[] {
     if (!state || typeof state !== 'object') return [];
 
@@ -578,9 +647,23 @@ export class TestExecutor {
 
     context.logger.info(`  Executing procedure: ${name}`);
 
-    // Set up parameter variables with prefix
+    // Save original variable values to restore after procedure execution
+    const savedValues = new Map<string, unknown>();
+
+    // Set up parameter variables (procedure steps reference them directly as ${paramName})
     for (const [key, value] of Object.entries(args)) {
-      context.variables.set(`__param_${key}`, value);
+      // Resolve any ${variable} placeholders in the argument value
+      let resolvedValue = value;
+      if (typeof value === 'string' && value.includes('${')) {
+        resolvedValue = this.resolveVariablePlaceholders(value, context);
+      }
+
+      // Save original value if it exists
+      if (context.variables.has(key)) {
+        savedValues.set(key, context.variables.get(key));
+      }
+
+      context.variables.set(key, resolvedValue);
     }
 
     // Execute procedure steps
@@ -604,12 +687,38 @@ export class TestExecutor {
       }
     }
 
-    // Clean up parameter variables
+    // Restore original variable values
+    for (const [key, originalValue] of savedValues) {
+      context.variables.set(key, originalValue);
+    }
+    // Remove variables that didn't exist before
     for (const key of Object.keys(args)) {
-      context.variables.delete(`__param_${key}`);
+      if (!savedValues.has(key)) {
+        context.variables.delete(key);
+      }
     }
 
     return returnValue;
+  }
+
+  private resolveVariablePlaceholders(text: string, context: ExecutionContext): string {
+    return text.replace(/\$\{([\w.]+)\}/g, (match, path) => {
+      const parts = path.split('.');
+      const varName = parts[0];
+      let value: unknown = context.variables.get(varName);
+
+      // Handle dot notation for nested object access
+      if (parts.length > 1 && value !== undefined && value !== null) {
+        for (let i = 1; i < parts.length; i++) {
+          if (value === undefined || value === null) break;
+          value = (value as Record<string, unknown>)[parts[i]];
+        }
+      }
+
+      if (value === undefined || value === null) return match;
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    });
   }
 
   private async resolveParams(

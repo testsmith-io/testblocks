@@ -22,6 +22,11 @@ interface FileTreeProps {
   onCreateFile?: (parentNode: FileNode) => void;
   onCreateFolder?: (parentNode: FileNode) => void;
   onRename?: (node: FileNode) => void;
+  onDelete?: (node: FileNode) => void;
+  onMove?: (sourceNode: FileNode, targetFolder: FileNode) => void;
+  onRunFolder?: (node: FileNode) => void;
+  isRunning?: boolean;
+  failedFiles?: Set<string>;
 }
 
 interface FileTreeNodeProps {
@@ -33,11 +38,35 @@ interface FileTreeNodeProps {
   onCreateFile?: (parentNode: FileNode) => void;
   onCreateFolder?: (parentNode: FileNode) => void;
   onRename?: (node: FileNode) => void;
+  onDelete?: (node: FileNode) => void;
+  onMove?: (sourceNode: FileNode, targetFolder: FileNode) => void;
+  onRunFolder?: (node: FileNode) => void;
+  isRunning?: boolean;
+  failedFiles?: Set<string>;
+  draggedNode: FileNode | null;
+  setDraggedNode: (node: FileNode | null) => void;
 }
 
-function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder, onCreateFile, onCreateFolder, onRename }: FileTreeNodeProps) {
+function FileTreeNode({
+  node,
+  depth,
+  selectedPath,
+  onSelectFile,
+  onSelectFolder,
+  onCreateFile,
+  onCreateFolder,
+  onRename,
+  onDelete,
+  onMove,
+  onRunFolder,
+  isRunning,
+  failedFiles,
+  draggedNode,
+  setDraggedNode,
+}: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [showActions, setShowActions] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   const isSelected = node.path === selectedPath;
   const isFolder = node.type === 'folder';
   const hasChildren = isFolder && node.children && node.children.length > 0;
@@ -81,23 +110,113 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
     setShowActions(false);
   };
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onDelete) {
+      onDelete(node);
+    }
+    setShowActions(false);
+  };
+
+  const handleRunFolder = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onRunFolder) {
+      onRunFolder(node);
+    }
+    setShowActions(false);
+  };
+
   const toggleActions = (e: React.MouseEvent) => {
     e.stopPropagation();
     setShowActions(!showActions);
   };
 
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent) => {
+    e.stopPropagation();
+    setDraggedNode(node);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', node.path);
+    // Add a slight delay to allow the drag image to be captured
+    setTimeout(() => {
+      (e.target as HTMLElement).classList.add('dragging');
+    }, 0);
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    e.stopPropagation();
+    setDraggedNode(null);
+    (e.target as HTMLElement).classList.remove('dragging');
+    setIsDragOver(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Only folders can be drop targets
+    if (!isFolder || !draggedNode || !onMove) return;
+
+    // Can't drop on itself or its children
+    if (draggedNode.path === node.path) return;
+    if (node.path.startsWith(draggedNode.path + '/')) return;
+
+    // Can't drop in its current parent
+    const draggedParentPath = draggedNode.path.split('/').slice(0, -1).join('/');
+    if (draggedParentPath === node.path) return;
+
+    e.dataTransfer.dropEffect = 'move';
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    if (!isFolder || !draggedNode || !onMove) return;
+
+    // Can't drop on itself or its children
+    if (draggedNode.path === node.path) return;
+    if (node.path.startsWith(draggedNode.path + '/')) return;
+
+    // Can't drop in its current parent
+    const draggedParentPath = draggedNode.path.split('/').slice(0, -1).join('/');
+    if (draggedParentPath === node.path) return;
+
+    onMove(draggedNode, node);
+    setDraggedNode(null);
+  };
+
+  const isDragging = draggedNode?.path === node.path;
+
   return (
     <div className="file-tree-node">
       <div
-        className={`file-tree-item ${isSelected ? 'selected' : ''} ${isFolder ? 'folder' : 'file'}`}
+        className={`file-tree-item ${isSelected ? 'selected' : ''} ${isFolder ? 'folder' : 'file'} ${isDragOver ? 'drag-over' : ''} ${isDragging ? 'dragging' : ''}`}
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={handleClick}
         onMouseLeave={() => setShowActions(false)}
+        draggable={!!onMove}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         <span className="file-tree-icon">
           {isFolder ? (isExpanded ? '📂' : '📁') : '📄'}
         </span>
         <span className="file-tree-name">{node.name}</span>
+        {failedFiles?.has(node.path) && (
+          <span className="file-tree-failed-indicator" title="Tests failed in previous run">●</span>
+        )}
         {node.testFile && (
           <span className="file-tree-badge">{node.testFile.tests.length}</span>
         )}
@@ -115,6 +234,16 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
             </button>
             {showActions && (
               <div className="folder-actions-menu">
+                {isFolder && onRunFolder && (
+                  <button
+                    onClick={handleRunFolder}
+                    title="Run all tests in this folder"
+                    disabled={isRunning}
+                    className="run-action"
+                  >
+                    ▶️ {isRunning ? 'Running...' : 'Run All Tests'}
+                  </button>
+                )}
                 {isFolder && onCreateFile && (
                   <button onClick={handleCreateFile} title="New test file">
                     📄 New File
@@ -128,6 +257,11 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
                 {onRename && (
                   <button onClick={handleRename} title="Rename">
                     ✏️ Rename
+                  </button>
+                )}
+                {onDelete && (
+                  <button onClick={handleDelete} title="Delete" className="delete-action">
+                    🗑️ Delete
                   </button>
                 )}
                 {isFolder && onSelectFolder && (
@@ -153,6 +287,13 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
               onRename={onRename}
+              onDelete={onDelete}
+              onMove={onMove}
+              onRunFolder={onRunFolder}
+              isRunning={isRunning}
+              failedFiles={failedFiles}
+              draggedNode={draggedNode}
+              setDraggedNode={setDraggedNode}
             />
           ))}
         </div>
@@ -161,7 +302,9 @@ function FileTreeNode({ node, depth, selectedPath, onSelectFile, onSelectFolder,
   );
 }
 
-export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh, onCreateFile, onCreateFolder, onRename }: FileTreeProps) {
+export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onRefresh, onCreateFile, onCreateFolder, onRename, onDelete, onMove, onRunFolder, isRunning, failedFiles }: FileTreeProps) {
+  const [draggedNode, setDraggedNode] = useState<FileNode | null>(null);
+
   if (!root) {
     return (
       <div className="file-tree-empty">
@@ -171,9 +314,37 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
     );
   }
 
+  // Handle drop on root folder
+  const handleRootDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!draggedNode || !onMove) return;
+
+    // Can't drop in its current parent (root)
+    const draggedParentPath = draggedNode.path.split('/').slice(0, -1).join('/');
+    if (draggedParentPath === root.path) return;
+
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleRootDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!draggedNode || !onMove) return;
+
+    // Can't drop in its current parent (root)
+    const draggedParentPath = draggedNode.path.split('/').slice(0, -1).join('/');
+    if (draggedParentPath === root.path) return;
+
+    onMove(draggedNode, root);
+    setDraggedNode(null);
+  };
+
   return (
     <div className="file-tree">
-      <div className="file-tree-header">
+      <div
+        className="file-tree-header"
+        onDragOver={handleRootDragOver}
+        onDrop={handleRootDrop}
+      >
         <span className="file-tree-root-name">{root.name}</span>
         <div className="file-tree-header-actions">
           {onCreateFile && (
@@ -192,6 +363,16 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
               title="New folder"
             >
               +📁
+            </button>
+          )}
+          {onRunFolder && (
+            <button
+              className="file-tree-action-btn file-tree-run-btn"
+              onClick={() => onRunFolder(root)}
+              title="Run all tests in project"
+              disabled={isRunning}
+            >
+              {isRunning ? '...' : '▶'}
             </button>
           )}
           {onRefresh && (
@@ -214,6 +395,13 @@ export function FileTree({ root, selectedPath, onSelectFile, onSelectFolder, onR
               onCreateFile={onCreateFile}
               onCreateFolder={onCreateFolder}
               onRename={onRename}
+              onDelete={onDelete}
+              onMove={onMove}
+              onRunFolder={onRunFolder}
+              isRunning={isRunning}
+              failedFiles={failedFiles}
+              draggedNode={draggedNode}
+              setDraggedNode={setDraggedNode}
             />
           ))
         ) : (

@@ -1,4 +1,5 @@
 import { BlockDefinition, ExecutionContext } from '../types';
+import { handleAssertion } from './assertions';
 
 // Logic and Control Flow Blocks
 export const logicBlocks: BlockDefinition[] = [
@@ -342,9 +343,13 @@ export const logicBlocks: BlockDefinition[] = [
       const condition = params.CONDITION as boolean;
       const message = resolveVariables(params.MESSAGE as string, context);
 
-      if (!condition) {
-        throw new Error(message);
-      }
+      handleAssertion(
+        context,
+        condition,
+        message,
+        { stepType: 'logic_assert', expected: true, actual: condition }
+      );
+
       context.logger.info('✓ Assertion passed');
     },
   },
