@@ -4,6 +4,7 @@ export { logicBlocks } from './logic';
 export { lifecycleBlocks } from './lifecycle';
 export { dataDrivenBlocks } from './data-driven';
 export { procedureBlocks, registerProcedure, getProcedure, clearProcedures } from './procedures';
+export { handleAssertion, flushSoftAssertionErrors, getSoftAssertionErrors, clearSoftAssertionErrors } from './assertions';
 
 import { apiBlocks } from './api';
 import { playwrightBlocks } from './playwright';

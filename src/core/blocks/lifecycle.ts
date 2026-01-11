@@ -10,11 +10,12 @@ export const lifecycleBlocks: BlockDefinition[] = [
     tooltip: 'A test case containing steps to execute',
     inputs: [
       { name: 'NAME', type: 'field', fieldType: 'multiline', default: 'Test Case' },
+      { name: 'SOFT_ASSERTIONS', type: 'field', fieldType: 'checkbox', default: false },
       { name: 'STEPS', type: 'statement' },
     ],
     execute: async (params, _context) => {
       // Marker block - steps are executed by the executor
-      return { testCase: true, name: params.NAME, statement: 'STEPS' };
+      return { testCase: true, name: params.NAME, softAssertions: params.SOFT_ASSERTIONS, statement: 'STEPS' };
     },
   },
 
@@ -26,6 +27,7 @@ export const lifecycleBlocks: BlockDefinition[] = [
     tooltip: 'A data-driven test case that runs for each row of data (CSV format: header row, then data rows)',
     inputs: [
       { name: 'NAME', type: 'field', fieldType: 'text', default: 'Data-Driven Test' },
+      { name: 'SOFT_ASSERTIONS', type: 'field', fieldType: 'checkbox', default: false },
       { name: 'DATA', type: 'field', fieldType: 'multiline', default: 'username,password,expected\nuser1,pass1,true\nuser2,pass2,false' },
       { name: 'STEPS', type: 'statement' },
     ],
@@ -35,7 +37,7 @@ export const lifecycleBlocks: BlockDefinition[] = [
       const rows = csvData.trim().split('\n').map(row => row.split(',').map(cell => cell.trim()));
 
       if (rows.length < 2) {
-        return { testCase: true, name: params.NAME, dataDriven: true, data: [], statement: 'STEPS' };
+        return { testCase: true, name: params.NAME, softAssertions: params.SOFT_ASSERTIONS, dataDriven: true, data: [], statement: 'STEPS' };
       }
 
       const headers = rows[0];
@@ -52,7 +54,7 @@ export const lifecycleBlocks: BlockDefinition[] = [
         return { name: `Row ${index + 1}`, values };
       });
 
-      return { testCase: true, name: params.NAME, dataDriven: true, data, statement: 'STEPS' };
+      return { testCase: true, name: params.NAME, softAssertions: params.SOFT_ASSERTIONS, dataDriven: true, data, statement: 'STEPS' };
     },
   },
 

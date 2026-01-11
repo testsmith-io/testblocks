@@ -8,7 +8,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { TestStep, BlockDefinition, registerBlock, getBlock } from '../core';
+import { TestStep, BlockDefinition, registerBlock, getBlock, ProcedureDefinition } from '../core';
 
 // Store loaded globals and snippets
 let globalsDirectory: string = process.cwd();
@@ -17,6 +17,7 @@ const loadedSnippets: Map<string, SnippetDefinition> = new Map();
 
 export interface GlobalsConfig {
   variables?: Record<string, unknown>;
+  procedures?: Record<string, ProcedureDefinition>;
   baseUrl?: string;
   timeout?: number;
   testIdAttribute?: string;
@@ -90,6 +91,13 @@ export function getGlobals(): GlobalsConfig {
  */
 export function getGlobalVariables(): Record<string, unknown> {
   return (loadedGlobals as GlobalsConfig).variables || {};
+}
+
+/**
+ * Get global procedures from globals.json
+ */
+export function getGlobalProcedures(): Record<string, ProcedureDefinition> {
+  return (loadedGlobals as GlobalsConfig).procedures || {};
 }
 
 /**

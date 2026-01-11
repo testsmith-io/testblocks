@@ -53,6 +53,7 @@ import {
   initializeGlobalsAndSnippets,
   getGlobals,
   getGlobalVariables,
+  getGlobalProcedures,
   getAllSnippets,
   getGlobalsDirectory,
   setGlobalsDirectory,
@@ -194,6 +195,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   // Get globals and snippets
   app.get('/api/globals', (_req, res) => {
     const globals = getGlobals();
+    const globalProcedures = getGlobalProcedures();
     const snippets = getAllSnippets().map(s => ({
       name: s.name,
       description: s.description,
@@ -201,10 +203,19 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       params: s.params,
       stepCount: s.steps.length,
     }));
+    // Convert procedures to a format the client can use for blocks
+    const procedures = Object.entries(globalProcedures).map(([, proc]) => ({
+      name: proc.name,
+      description: proc.description,
+      category: 'Custom',
+      params: proc.params,
+      stepCount: proc.steps?.length || 0,
+    }));
     res.json({
       directory: getGlobalsDirectory(),
       globals,
       snippets,
+      procedures,
       testIdAttribute: getTestIdAttribute(),
     });
   });
@@ -234,12 +245,14 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
       const globalVars = getGlobalVariables();
+      const globalProcs = getGlobalProcedures();
       const testIdAttr = getTestIdAttribute();
 
       const executor = new TestExecutor({
         headless: req.query.headless !== 'false',
         timeout: Number(req.query.timeout) || 30000,
         variables: globalVars,
+        procedures: globalProcs,
         testIdAttribute: testIdAttr,
         baseDir: globalsDir,
       });
@@ -278,16 +291,19 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
       const globalVars = getGlobalVariables();
+      const globalProcs = getGlobalProcedures();
       const testIdAttr = getTestIdAttribute();
 
       const executor = new TestExecutor({
         headless: req.query.headless !== 'false',
         timeout: Number(req.query.timeout) || 30000,
         variables: globalVars,
+        procedures: globalProcs,
         testIdAttribute: testIdAttr,
         baseDir: globalsDir,
       });
 
+      // Register file-level procedures (overrides globals)
       if (mergedTestFile.procedures) {
         executor.registerProcedures(mergedTestFile.procedures);
       }

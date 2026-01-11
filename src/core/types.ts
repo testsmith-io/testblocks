@@ -63,6 +63,8 @@ export interface TestCase {
   afterEach?: TestStep[];
   steps: TestStep[];
   tags?: string[];
+  // Soft assertions: collect all assertion failures instead of stopping at first
+  softAssertions?: boolean;
 }
 
 // Data set for data-driven testing
@@ -106,6 +108,16 @@ export interface BlockOutput {
   type: string | string[];
 }
 
+// Soft assertion error - collected instead of thrown immediately
+export interface SoftAssertionError {
+  message: string;
+  stepId?: string;
+  stepType?: string;
+  expected?: unknown;
+  actual?: unknown;
+  timestamp: string;
+}
+
 // Execution context passed to blocks during test runs
 export interface ExecutionContext {
   variables: Map<string, unknown>;
@@ -124,6 +136,10 @@ export interface ExecutionContext {
   dataIndex?: number;
   // Test ID attribute for building selectors (e.g., 'data-testid', 'data-test')
   testIdAttribute?: string;
+  // Soft assertions mode - when enabled, assertions are collected instead of throwing
+  softAssertions?: boolean;
+  // Collected soft assertion errors
+  softAssertionErrors?: SoftAssertionError[];
 }
 
 export interface Logger {
@@ -152,6 +168,8 @@ export interface TestResult {
   // Lifecycle indicator
   isLifecycle?: boolean;
   lifecycleType?: 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach';
+  // Soft assertion errors collected during test
+  softAssertionErrors?: SoftAssertionError[];
 }
 
 export interface StepResult {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as Blockly from 'blockly';
 import { builtInBlocks, TestStep } from '../../core';
-import { registerBlocklyBlocks, createToolbox, workspaceToTestSteps, loadStepsToWorkspace, getTestNameFromWorkspace, getTestDataFromWorkspace } from '../blockly/blockDefinitions';
+import { registerBlocklyBlocks, createToolbox, workspaceToTestSteps, loadStepsToWorkspace, getTestNameFromWorkspace, getTestDataFromWorkspace, getSoftAssertionsFromWorkspace } from '../blockly/blockDefinitions';
 import { analyzeSelectedBlocks, registerCustomBlock, updateCustomBlock, CustomBlockConfig, getCustomBlocks, getCustomBlockConfig, isCustomBlock, ExtractedParameter } from '../blockly/customBlockCreator';
 import { CreateBlockDialog, CreateBlockResult } from './CreateBlockDialog';
 import { CreateVariableDialog, FieldValue, CreateVariableResult } from './CreateVariableDialog';
@@ -33,7 +33,7 @@ async function ensureSnippetsInitialized(): Promise<void> {
 }
 
 interface BlocklyWorkspaceProps {
-  onWorkspaceChange: (steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => void;
+  onWorkspaceChange: (steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>, softAssertions?: boolean) => void;
   onCustomBlockCreated?: (blockType: string) => void;
   onReplaceMatches?: (result: CreateBlockResult, blockType: string) => void;
   onCreateVariable?: (value: string, type: 'global' | 'file', name: string) => void;
@@ -41,6 +41,7 @@ interface BlocklyWorkspaceProps {
   testName?: string;
   lifecycleType?: string; // 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach'
   testData?: Array<{ name?: string; values: Record<string, unknown> }>; // Data for data-driven tests
+  softAssertions?: boolean; // Enable soft assertions for this test
   projectRoot?: FileNode | null;
   currentFilePath?: string;
 }
@@ -48,7 +49,7 @@ interface BlocklyWorkspaceProps {
 // Register blocks once globally
 let blocksRegistered = false;
 
-export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onReplaceMatches, onCreateVariable, initialSteps, testName, lifecycleType, testData, projectRoot, currentFilePath }: BlocklyWorkspaceProps) {
+export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onReplaceMatches, onCreateVariable, initialSteps, testName, lifecycleType, testData, softAssertions, projectRoot, currentFilePath }: BlocklyWorkspaceProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<Blockly.WorkspaceSvg | null>(null);
   const isLoadingRef = useRef(false);
@@ -92,6 +93,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
   const testNameRef = useRef(testName);
   const lifecycleTypeRef = useRef(lifecycleType);
   const testDataRef = useRef(testData);
+  const softAssertionsRef = useRef(softAssertions);
 
   // Store selected block IDs for replacement after dialog
   const selectedBlockIdsRef = useRef<string[]>([]);
@@ -291,6 +293,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
 
       // Get snippet blocks and register them with Blockly
       const snippetBlocks = getSnippetBlocks();
+      console.log('[BlocklyWorkspace] Snippet blocks (includes procedures):', snippetBlocks.map(b => `${b.type} (${b.category})`));
       if (snippetBlocks.length > 0) {
         registerBlocklyBlocks(snippetBlocks);
       }
@@ -303,6 +306,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
 
       // Create toolbox with built-in, plugin, snippet, and custom blocks
       const allBlocks = [...builtInBlocks, ...pluginBlocks, ...snippetBlocks, ...customBlocks];
+      console.log('[BlocklyWorkspace] All blocks for toolbox:', allBlocks.length, 'blocks. Categories:', [...new Set(allBlocks.map(b => b.category))]);
       const toolbox = createToolbox(allBlocks);
 
       // Initialize workspace
@@ -635,12 +639,403 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
       }
       Blockly.ContextMenuRegistry.registry.register(createVariableMenuItem);
 
+      // Copy blocks context menu
+      const copyBlocksMenuItem = {
+        displayText: () => {
+          const count = multiSelectedBlocks.size;
+          if (count > 1) {
+            return `Copy ${count} Blocks`;
+          }
+          return 'Copy Block(s)';
+        },
+        preconditionFn: (scope: { block?: Blockly.Block }) => {
+          if (scope.block && scope.block.type !== 'test_case' && scope.block.type !== 'data_driven_test') {
+            return 'enabled';
+          }
+          return 'hidden';
+        },
+        callback: (scope: { block?: Blockly.Block }) => {
+          if (!scope.block) return;
+
+          let blocksToCopy: Blockly.Block[] = [];
+
+          // If we have multi-selected blocks, use those
+          if (multiSelectedBlocks.size > 0) {
+            blocksToCopy = Array.from(multiSelectedBlocks)
+              .map(id => workspace.getBlockById(id))
+              .filter((b): b is Blockly.Block => b !== null && b.type !== 'test_case' && b.type !== 'data_driven_test');
+          }
+
+          // If no multi-selection, copy the right-clicked block and its connected chain
+          if (blocksToCopy.length === 0) {
+            let current: Blockly.Block | null = scope.block;
+            while (current) {
+              if (current.type !== 'test_case' && current.type !== 'data_driven_test') {
+                blocksToCopy.push(current);
+              }
+              current = current.getNextBlock();
+            }
+          }
+
+          if (blocksToCopy.length === 0) {
+            toast.warning('No blocks to copy');
+            return;
+          }
+
+          // Sort blocks by Y position to maintain order
+          blocksToCopy.sort((a, b) => {
+            const posA = a.getRelativeToSurfaceXY();
+            const posB = b.getRelativeToSurfaceXY();
+            return posA.y - posB.y;
+          });
+
+          // Serialize each block
+          const serializedBlocks = blocksToCopy.map(block => {
+            return Blockly.serialization.blocks.save(block);
+          });
+
+          // Store in localStorage for cross-workspace paste
+          localStorage.setItem('testblocks-clipboard', JSON.stringify(serializedBlocks));
+
+          toast.success(`Copied ${blocksToCopy.length} block(s)`);
+        },
+        scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+        id: 'copy_blocks',
+        weight: 10,
+      };
+
+      // Register the copy menu item
+      try {
+        Blockly.ContextMenuRegistry.registry.unregister('copy_blocks');
+      } catch {
+        // Item not registered yet, that's fine
+      }
+      Blockly.ContextMenuRegistry.registry.register(copyBlocksMenuItem);
+
+      // Paste blocks context menu (workspace scope)
+      const pasteBlocksWorkspaceMenuItem = {
+        displayText: () => 'Paste Block(s)',
+        preconditionFn: () => {
+          const clipboard = localStorage.getItem('testblocks-clipboard');
+          if (clipboard) {
+            try {
+              const blocks = JSON.parse(clipboard);
+              if (Array.isArray(blocks) && blocks.length > 0) {
+                return 'enabled';
+              }
+            } catch {
+              // Invalid clipboard data
+            }
+          }
+          return 'disabled';
+        },
+        callback: () => {
+          const clipboard = localStorage.getItem('testblocks-clipboard');
+          if (!clipboard) {
+            toast.warning('Nothing to paste');
+            return;
+          }
+
+          try {
+            const serializedBlocks = JSON.parse(clipboard);
+            if (!Array.isArray(serializedBlocks) || serializedBlocks.length === 0) {
+              toast.warning('Nothing to paste');
+              return;
+            }
+
+            // Find the test_case or data_driven_test container block
+            const containerBlock = workspace.getTopBlocks(false).find(
+              b => b.type === 'test_case' || b.type === 'data_driven_test'
+            );
+
+            Blockly.Events.disable();
+            try {
+              let previousBlock: Blockly.Block | null = null;
+              let firstPastedBlock: Blockly.Block | null = null;
+
+              // If we have a container, find the last block in its chain
+              if (containerBlock) {
+                let lastBlock: Blockly.Block | null = containerBlock;
+                while (lastBlock.getNextBlock()) {
+                  lastBlock = lastBlock.getNextBlock();
+                }
+                previousBlock = lastBlock;
+              }
+
+              for (const blockState of serializedBlocks) {
+                // Create the block from serialized state
+                const newBlock = Blockly.serialization.blocks.append(blockState, workspace);
+
+                if (!firstPastedBlock) {
+                  firstPastedBlock = newBlock;
+                }
+
+                // Connect to chain if we have a previous block
+                if (previousBlock && previousBlock.nextConnection && newBlock.previousConnection) {
+                  previousBlock.nextConnection.connect(newBlock.previousConnection);
+                }
+
+                previousBlock = newBlock;
+              }
+
+              // Scroll to show the pasted blocks
+              if (firstPastedBlock) {
+                workspace.centerOnBlock(firstPastedBlock.id);
+              }
+
+              toast.success(`Pasted ${serializedBlocks.length} block(s)`);
+            } finally {
+              Blockly.Events.enable();
+            }
+
+            // Trigger change event
+            if (onChangeRef.current) {
+              const steps = workspaceToTestSteps(workspace);
+              onChangeRef.current(steps);
+            }
+          } catch (e) {
+            console.error('Failed to paste blocks:', e);
+            toast.error('Failed to paste blocks');
+          }
+        },
+        scopeType: Blockly.ContextMenuRegistry.ScopeType.WORKSPACE,
+        id: 'paste_blocks_workspace',
+        weight: 10,
+      };
+
+      // Register the paste menu item for workspace
+      try {
+        Blockly.ContextMenuRegistry.registry.unregister('paste_blocks_workspace');
+      } catch {
+        // Item not registered yet, that's fine
+      }
+      Blockly.ContextMenuRegistry.registry.register(pasteBlocksWorkspaceMenuItem);
+
+      // Paste blocks context menu (block scope - paste after selected block)
+      const pasteBlocksAfterMenuItem = {
+        displayText: () => 'Paste Block(s) After',
+        preconditionFn: (scope: { block?: Blockly.Block }) => {
+          if (!scope.block || scope.block.type === 'test_case' || scope.block.type === 'data_driven_test') {
+            return 'hidden';
+          }
+          const clipboard = localStorage.getItem('testblocks-clipboard');
+          if (clipboard) {
+            try {
+              const blocks = JSON.parse(clipboard);
+              if (Array.isArray(blocks) && blocks.length > 0) {
+                return 'enabled';
+              }
+            } catch {
+              // Invalid clipboard data
+            }
+          }
+          return 'disabled';
+        },
+        callback: (scope: { block?: Blockly.Block }) => {
+          if (!scope.block) return;
+
+          const clipboard = localStorage.getItem('testblocks-clipboard');
+          if (!clipboard) {
+            toast.warning('Nothing to paste');
+            return;
+          }
+
+          try {
+            const serializedBlocks = JSON.parse(clipboard);
+            if (!Array.isArray(serializedBlocks) || serializedBlocks.length === 0) {
+              toast.warning('Nothing to paste');
+              return;
+            }
+
+            Blockly.Events.disable();
+            try {
+              const nextBlock = scope.block.getNextBlock();
+              let previousBlock: Blockly.Block | null = scope.block;
+              let firstPastedBlock: Blockly.Block | null = null;
+
+              for (const blockState of serializedBlocks) {
+                const newBlock = Blockly.serialization.blocks.append(blockState, workspace);
+
+                if (!firstPastedBlock) {
+                  firstPastedBlock = newBlock;
+                }
+
+                // Connect to previous block
+                if (previousBlock && previousBlock.nextConnection && newBlock.previousConnection) {
+                  previousBlock.nextConnection.connect(newBlock.previousConnection);
+                }
+
+                previousBlock = newBlock;
+              }
+
+              // Connect the last pasted block to the original next block
+              if (previousBlock && nextBlock && previousBlock.nextConnection && nextBlock.previousConnection) {
+                previousBlock.nextConnection.connect(nextBlock.previousConnection);
+              }
+
+              toast.success(`Pasted ${serializedBlocks.length} block(s)`);
+            } finally {
+              Blockly.Events.enable();
+            }
+
+            // Trigger change event
+            if (onChangeRef.current) {
+              const steps = workspaceToTestSteps(workspace);
+              onChangeRef.current(steps);
+            }
+          } catch (e) {
+            console.error('Failed to paste blocks:', e);
+            toast.error('Failed to paste blocks');
+          }
+        },
+        scopeType: Blockly.ContextMenuRegistry.ScopeType.BLOCK,
+        id: 'paste_blocks_after',
+        weight: 11,
+      };
+
+      // Register the paste after menu item
+      try {
+        Blockly.ContextMenuRegistry.registry.unregister('paste_blocks_after');
+      } catch {
+        // Item not registered yet, that's fine
+      }
+      Blockly.ContextMenuRegistry.registry.register(pasteBlocksAfterMenuItem);
+
+      // Keyboard shortcuts for copy/paste
+      const handleKeyboardShortcuts = (e: KeyboardEvent) => {
+        // Check if we're in an input field
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+          return;
+        }
+
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const modifierKey = isMac ? e.metaKey : e.ctrlKey;
+
+        if (modifierKey && e.key === 'c') {
+          // Copy
+          const selectedBlock = Blockly.common.getSelected() as Blockly.Block | null;
+          if (!selectedBlock || selectedBlock.type === 'test_case' || selectedBlock.type === 'data_driven_test') {
+            return;
+          }
+
+          let blocksToCopy: Blockly.Block[] = [];
+
+          // If we have multi-selected blocks, use those
+          if (multiSelectedBlocks.size > 0) {
+            blocksToCopy = Array.from(multiSelectedBlocks)
+              .map(id => workspace.getBlockById(id))
+              .filter((b): b is Blockly.Block => b !== null && b.type !== 'test_case' && b.type !== 'data_driven_test');
+          }
+
+          // If no multi-selection, copy the selected block and its chain
+          if (blocksToCopy.length === 0 && selectedBlock) {
+            let current: Blockly.Block | null = selectedBlock;
+            while (current) {
+              if (current.type !== 'test_case' && current.type !== 'data_driven_test') {
+                blocksToCopy.push(current);
+              }
+              current = current.getNextBlock();
+            }
+          }
+
+          if (blocksToCopy.length > 0) {
+            blocksToCopy.sort((a, b) => {
+              const posA = a.getRelativeToSurfaceXY();
+              const posB = b.getRelativeToSurfaceXY();
+              return posA.y - posB.y;
+            });
+
+            const serializedBlocks = blocksToCopy.map(block => Blockly.serialization.blocks.save(block));
+            localStorage.setItem('testblocks-clipboard', JSON.stringify(serializedBlocks));
+            toast.success(`Copied ${blocksToCopy.length} block(s)`);
+            e.preventDefault();
+          }
+        } else if (modifierKey && e.key === 'v') {
+          // Paste
+          const clipboard = localStorage.getItem('testblocks-clipboard');
+          if (!clipboard) return;
+
+          try {
+            const serializedBlocks = JSON.parse(clipboard);
+            if (!Array.isArray(serializedBlocks) || serializedBlocks.length === 0) return;
+
+            // Find where to paste - after selected block or at end of container
+            let previousBlock: Blockly.Block | null = null;
+            let nextBlock: Blockly.Block | null = null;
+
+            const selectedBlock = Blockly.common.getSelected() as Blockly.Block | null;
+            if (selectedBlock && selectedBlock.type !== 'test_case' && selectedBlock.type !== 'data_driven_test') {
+              previousBlock = selectedBlock;
+              nextBlock = selectedBlock.getNextBlock();
+            } else {
+              // Find the container and paste at the end
+              const containerBlock = workspace.getTopBlocks(false).find(
+                b => b.type === 'test_case' || b.type === 'data_driven_test'
+              );
+              if (containerBlock) {
+                let lastBlock: Blockly.Block | null = containerBlock;
+                while (lastBlock.getNextBlock()) {
+                  lastBlock = lastBlock.getNextBlock();
+                }
+                previousBlock = lastBlock;
+              }
+            }
+
+            Blockly.Events.disable();
+            try {
+              let firstPastedBlock: Blockly.Block | null = null;
+
+              for (const blockState of serializedBlocks) {
+                const newBlock = Blockly.serialization.blocks.append(blockState, workspace);
+
+                if (!firstPastedBlock) {
+                  firstPastedBlock = newBlock;
+                }
+
+                if (previousBlock && previousBlock.nextConnection && newBlock.previousConnection) {
+                  previousBlock.nextConnection.connect(newBlock.previousConnection);
+                }
+
+                previousBlock = newBlock;
+              }
+
+              // Reconnect to next block if we inserted in the middle
+              if (previousBlock && nextBlock && previousBlock.nextConnection && nextBlock.previousConnection) {
+                previousBlock.nextConnection.connect(nextBlock.previousConnection);
+              }
+
+              if (firstPastedBlock) {
+                workspace.centerOnBlock(firstPastedBlock.id);
+              }
+
+              toast.success(`Pasted ${serializedBlocks.length} block(s)`);
+            } finally {
+              Blockly.Events.enable();
+            }
+
+            // Trigger change event
+            if (onChangeRef.current) {
+              const steps = workspaceToTestSteps(workspace);
+              onChangeRef.current(steps);
+            }
+
+            e.preventDefault();
+          } catch (e) {
+            console.error('Failed to paste blocks:', e);
+          }
+        }
+      };
+
+      document.addEventListener('keydown', handleKeyboardShortcuts);
+
       // Load initial steps - use refs to get initial values
       isLoadingRef.current = true;
       const steps = initialStepsRef.current;
       const name = testNameRef.current;
       const lifecycleT = lifecycleTypeRef.current;
       const data = testDataRef.current;
+      const softAssert = softAssertionsRef.current;
 
       try {
         if (steps && typeof steps === 'object' && !Array.isArray(steps) && 'blocks' in steps) {
@@ -648,12 +1043,12 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
           Blockly.serialization.workspaces.load(steps as Blockly.serialization.workspaces.State, workspace);
         } else {
           // Our TestStep[] format or empty - wrap in container block
-          loadStepsToWorkspace(workspace, Array.isArray(steps) ? steps : [], name, lifecycleT, data);
+          loadStepsToWorkspace(workspace, Array.isArray(steps) ? steps : [], name, lifecycleT, data, softAssert);
         }
       } catch (e) {
         console.error('Failed to load workspace state:', e);
         // Create empty container on error
-        loadStepsToWorkspace(workspace, [], name, lifecycleT, data);
+        loadStepsToWorkspace(workspace, [], name, lifecycleT, data, softAssert);
       }
 
       // Allow change events after initial load
@@ -677,7 +1072,8 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
             const newSteps = workspaceToTestSteps(workspaceRef.current);
             const newTestName = getTestNameFromWorkspace(workspaceRef.current);
             const newTestData = getTestDataFromWorkspace(workspaceRef.current);
-            onChangeRef.current(newSteps, newTestName, newTestData);
+            const newSoftAssertions = getSoftAssertionsFromWorkspace(workspaceRef.current);
+            onChangeRef.current(newSteps, newTestName, newTestData, newSoftAssertions);
           }
         }
       };
@@ -695,6 +1091,7 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
         () => window.removeEventListener('resize', handleResize),
         () => window.removeEventListener('keydown', onKeyDown),
         () => window.removeEventListener('keyup', onKeyUp),
+        () => document.removeEventListener('keydown', handleKeyboardShortcuts),
         () => workspace.getParentSvg().removeEventListener('click', onBlockClick),
         () => workspace.removeChangeListener(changeListener),
         () => {

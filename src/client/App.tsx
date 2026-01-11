@@ -20,58 +20,19 @@ import {
 } from './blockly/variableContext';
 import { ToastContainer, useToast, toast } from './components/Toast';
 import { VariablesEditor, recordToVariables, variablesToRecord } from './components/VariablesEditor';
-
-// IndexedDB helpers for storing directory handles
-const DB_NAME = 'testblocks-storage';
-const STORE_NAME = 'handles';
-
-async function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-  });
-}
-
-async function saveDirectoryHandle(handle: FileSystemDirectoryHandle): Promise<void> {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const request = store.put(handle, 'lastDirectory');
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
-  });
-}
-
-async function getStoredDirectoryHandle(): Promise<FileSystemDirectoryHandle | null> {
-  try {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const request = store.get('lastDirectory');
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => resolve(request.result || null);
-    });
-  } catch {
-    return null;
-  }
-}
+import {
+  saveDirectoryHandle,
+  getStoredDirectoryHandle,
+  scanDirectory,
+  loadGlobalsFile,
+  findNodeByPath,
+  findFolderByPath,
+  setNestedValue,
+  collectAllTestFiles,
+  GlobalsFile,
+} from './utils';
 
 type EditorTab = 'test' | 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach';
-
-interface GlobalsFile {
-  variables?: Record<string, unknown>;
-  config?: Record<string, unknown>;
-  testIdAttribute?: string;
-}
 
 interface AppState {
   // Project state
@@ -101,6 +62,9 @@ interface AppState {
   autoSaveStatus: 'idle' | 'saving' | 'saved';
   resultsPanelCollapsed: boolean;
   sidebarCollapsed: boolean;
+  // Test run state
+  failedFiles: Set<string>; // Paths of files with failed tests from last run
+  failedTestsMap: Map<string, Set<string>>; // Map of file path -> Set of test IDs that failed
   // App info
   version: string | null;
 }
@@ -121,122 +85,6 @@ const initialTestFile: TestFile = {
   ],
 };
 
-// Recursively scan a directory for .testblocks.json files
-async function scanDirectory(
-  dirHandle: FileSystemDirectoryHandle,
-  path: string = ''
-): Promise<FileNode> {
-  const node: FileNode = {
-    name: dirHandle.name,
-    path: path || dirHandle.name,
-    type: 'folder',
-    children: [],
-    folderHandle: dirHandle,
-  };
-
-  const entries: { name: string; kind: 'file' | 'directory'; handle: FileSystemHandle }[] = [];
-
-  for await (const entry of dirHandle.values()) {
-    entries.push({ name: entry.name, kind: entry.kind, handle: entry });
-  }
-
-  // Sort: folders first, then files, alphabetically
-  entries.sort((a, b) => {
-    if (a.kind !== b.kind) {
-      return a.kind === 'directory' ? -1 : 1;
-    }
-    return a.name.localeCompare(b.name);
-  });
-
-  for (const entry of entries) {
-    const entryPath = path ? `${path}/${entry.name}` : entry.name;
-
-    if (entry.kind === 'directory') {
-      const subDir = await scanDirectory(entry.handle as FileSystemDirectoryHandle, entryPath);
-      // Only include folders that have test files in them
-      if (subDir.children && subDir.children.length > 0) {
-        node.children!.push(subDir);
-      }
-    } else if (entry.name === '_hooks.testblocks.json') {
-      // Load folder hooks
-      try {
-        const fileHandle = entry.handle as FileSystemFileHandle;
-        const file = await fileHandle.getFile();
-        const content = await file.text();
-        const hooks = JSON.parse(content) as FolderHooks;
-        node.folderHooks = hooks;
-        node.hooksFileHandle = fileHandle;
-      } catch (e) {
-        console.warn(`Skipping invalid hooks file: ${entry.name}`, e);
-      }
-    } else if (entry.name.endsWith('.testblocks.json') || entry.name.endsWith('.json')) {
-      try {
-        const fileHandle = entry.handle as FileSystemFileHandle;
-        const file = await fileHandle.getFile();
-        const content = await file.text();
-        const testFile = JSON.parse(content) as TestFile;
-
-        // Verify it's a valid test file
-        if (testFile.version && testFile.tests && Array.isArray(testFile.tests)) {
-          node.children!.push({
-            name: entry.name,
-            path: entryPath,
-            type: 'file',
-            testFile,
-            handle: fileHandle,
-          });
-        }
-      } catch (e) {
-        // Skip invalid files
-        console.warn(`Skipping invalid file: ${entry.name}`, e);
-      }
-    }
-  }
-
-  return node;
-}
-
-// Load globals.json from a directory
-async function loadGlobalsFile(dirHandle: FileSystemDirectoryHandle): Promise<{
-  variables: Record<string, unknown> | null;
-  handle: FileSystemFileHandle | null;
-  fullContent: GlobalsFile | null;
-}> {
-  try {
-    const globalsHandle = await dirHandle.getFileHandle('globals.json');
-    const file = await globalsHandle.getFile();
-    const content = await file.text();
-    const globals = JSON.parse(content) as GlobalsFile;
-    console.log('[loadGlobalsFile] Loaded globals:', globals);
-    return {
-      variables: globals.variables || null,
-      handle: globalsHandle,
-      fullContent: globals,
-    };
-  } catch {
-    // globals.json doesn't exist or couldn't be parsed
-    console.log('[loadGlobalsFile] No globals.json found');
-    return { variables: null, handle: null, fullContent: null };
-  }
-}
-
-// Helper to set a nested value in an object using dot notation path
-function setNestedValue(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {
-  const result = JSON.parse(JSON.stringify(obj)); // Deep clone
-  const parts = path.split('.');
-  let current: Record<string, unknown> = result;
-
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!(parts[i] in current)) {
-      current[parts[i]] = {};
-    }
-    current = current[parts[i]] as Record<string, unknown>;
-  }
-
-  current[parts[parts.length - 1]] = value;
-  return result;
-}
-
 export default function App() {
   const { toasts, dismissToast } = useToast();
 
@@ -255,7 +103,7 @@ export default function App() {
     runningTestId: null,
     showVariables: false,
     showGlobalVariables: false,
-    headless: true,
+    headless: localStorage.getItem('testblocks-headless') !== 'false',
     editorTab: 'test',
     sidebarTab: 'files',
     showHelpDialog: false,
@@ -264,6 +112,8 @@ export default function App() {
     autoSaveStatus: 'idle',
     resultsPanelCollapsed: false,
     sidebarCollapsed: false,
+    failedFiles: new Set(),
+    failedTestsMap: new Map(),
     version: null,
   });
 
@@ -1104,8 +954,293 @@ export default function App() {
     );
   }, [showPrompt, state.projectRoot]);
 
+  // Delete a file or folder
+  const handleDelete = useCallback((node: FileNode) => {
+    const isFolder = node.type === 'folder';
+    const itemType = isFolder ? 'folder' : 'file';
+    const displayName = isFolder ? node.name : node.name.replace('.testblocks.json', '');
+
+    // Use confirm for deletion
+    if (!confirm(`Are you sure you want to delete the ${itemType} "${displayName}"?${isFolder ? '\n\nThis will delete all files and subfolders inside it.' : ''}`)) {
+      return;
+    }
+
+    // Get parent path and handle
+    const pathParts = node.path.split('/');
+    pathParts.pop();
+    const parentPath = pathParts.join('/');
+
+    // Find parent node to get its handle
+    const findParent = (root: FileNode | null, targetPath: string): FileNode | null => {
+      if (!root) return null;
+      if (root.path === targetPath) return root;
+      if (root.children) {
+        for (const child of root.children) {
+          const found = findParent(child, targetPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const parentNode = findParent(state.projectRoot, parentPath);
+    if (!parentNode?.folderHandle) {
+      toast.error('Cannot delete: parent folder handle not available');
+      return;
+    }
+
+    (async () => {
+      try {
+        // Delete the entry (recursive for folders)
+        await parentNode.folderHandle!.removeEntry(node.name, { recursive: isFolder });
+
+        // Update tree - remove the deleted node
+        setState(prev => {
+          const removeFromTree = (root: FileNode): FileNode => {
+            if (root.children) {
+              return {
+                ...root,
+                children: root.children
+                  .filter(child => child.path !== node.path)
+                  .map(removeFromTree),
+              };
+            }
+            return root;
+          };
+
+          const newProjectRoot = prev.projectRoot ? removeFromTree(prev.projectRoot) : null;
+
+          // Clear selection if the deleted item or something inside it was selected
+          let newSelectedPath = prev.selectedFilePath;
+          let newSelectedTest = prev.selectedTestIndex;
+          let newTestFile = prev.testFile;
+
+          if (prev.selectedFilePath === node.path || prev.selectedFilePath?.startsWith(node.path + '/')) {
+            newSelectedPath = null;
+            newSelectedTest = 0;
+            newTestFile = null;
+          }
+
+          return {
+            ...prev,
+            projectRoot: newProjectRoot,
+            selectedFilePath: newSelectedPath,
+            selectedTestIndex: newSelectedTest,
+            testFile: newTestFile,
+          };
+        });
+
+        toast.success(`Deleted: ${displayName}`);
+      } catch (error) {
+        console.error('Failed to delete:', error);
+        toast.error(`Failed to delete: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    })();
+  }, [state.projectRoot]);
+
+  // Move a file or folder to a new location
+  const handleMove = useCallback(async (sourceNode: FileNode, targetFolder: FileNode) => {
+    const isFolder = sourceNode.type === 'folder';
+    const itemType = isFolder ? 'folder' : 'file';
+
+    // Get source parent path and handle
+    const sourcePathParts = sourceNode.path.split('/');
+    sourcePathParts.pop();
+    const sourceParentPath = sourcePathParts.join('/');
+
+    // Find source parent node
+    const findNode = (root: FileNode | null, targetPath: string): FileNode | null => {
+      if (!root) return null;
+      if (root.path === targetPath) return root;
+      if (root.children) {
+        for (const child of root.children) {
+          const found = findNode(child, targetPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const sourceParentNode = findNode(state.projectRoot, sourceParentPath);
+    if (!sourceParentNode?.folderHandle) {
+      toast.error('Cannot move: source parent folder handle not available');
+      return;
+    }
+
+    if (!targetFolder.folderHandle) {
+      toast.error('Cannot move: target folder handle not available');
+      return;
+    }
+
+    try {
+      if (isFolder) {
+        // For folders: create new folder in target, copy contents recursively, delete old
+        const newFolderHandle = await targetFolder.folderHandle.getDirectoryHandle(sourceNode.name, { create: true });
+
+        // Helper to copy directory contents recursively
+        const copyDir = async (srcHandle: FileSystemDirectoryHandle, destHandle: FileSystemDirectoryHandle) => {
+          for await (const entry of (srcHandle as any).values()) {
+            if (entry.kind === 'file') {
+              const file = await entry.getFile();
+              const newFileHandle = await destHandle.getFileHandle(entry.name, { create: true });
+              const writable = await newFileHandle.createWritable();
+              await writable.write(await file.arrayBuffer());
+              await writable.close();
+            } else if (entry.kind === 'directory') {
+              const newSubDir = await destHandle.getDirectoryHandle(entry.name, { create: true });
+              await copyDir(entry, newSubDir);
+            }
+          }
+        };
+
+        if (sourceNode.folderHandle) {
+          await copyDir(sourceNode.folderHandle, newFolderHandle);
+        }
+
+        // Delete old folder
+        await sourceParentNode.folderHandle.removeEntry(sourceNode.name, { recursive: true });
+
+        // Update tree
+        const newPath = `${targetFolder.path}/${sourceNode.name}`;
+        setState(prev => {
+          // Remove from old location
+          const removeFromTree = (root: FileNode): FileNode => {
+            if (root.children) {
+              return {
+                ...root,
+                children: root.children
+                  .filter(child => child.path !== sourceNode.path)
+                  .map(removeFromTree),
+              };
+            }
+            return root;
+          };
+
+          // Add to new location
+          const addToTree = (root: FileNode): FileNode => {
+            if (root.path === targetFolder.path) {
+              // Update paths for the moved node and its children
+              const updatePaths = (n: FileNode, oldBase: string, newBase: string): FileNode => {
+                const updated: FileNode = {
+                  ...n,
+                  path: n.path.replace(oldBase, newBase),
+                  folderHandle: n.path === sourceNode.path ? newFolderHandle : n.folderHandle,
+                };
+                if (n.children) {
+                  updated.children = n.children.map(c => updatePaths(c, oldBase, newBase));
+                }
+                return updated;
+              };
+
+              const movedNode = updatePaths(sourceNode, sourceNode.path, newPath);
+              return {
+                ...root,
+                children: [...(root.children || []), movedNode].sort((a, b) => {
+                  // Sort folders before files, then alphabetically
+                  if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                }),
+              };
+            }
+            if (root.children) {
+              return { ...root, children: root.children.map(addToTree) };
+            }
+            return root;
+          };
+
+          let newProjectRoot = prev.projectRoot ? removeFromTree(prev.projectRoot) : null;
+          newProjectRoot = newProjectRoot ? addToTree(newProjectRoot) : null;
+
+          // Update selected path if it was inside the moved folder
+          let newSelectedPath = prev.selectedFilePath;
+          if (prev.selectedFilePath?.startsWith(sourceNode.path + '/')) {
+            newSelectedPath = prev.selectedFilePath.replace(sourceNode.path, newPath);
+          } else if (prev.selectedFilePath === sourceNode.path) {
+            newSelectedPath = newPath;
+          }
+
+          return { ...prev, projectRoot: newProjectRoot, selectedFilePath: newSelectedPath };
+        });
+
+        toast.success(`Moved ${sourceNode.name} to ${targetFolder.name}`);
+      } else {
+        // For files: create new file in target, copy content, delete old
+        if (!sourceNode.handle) {
+          toast.error('Cannot move: file handle not available');
+          return;
+        }
+
+        // Read old file content
+        const file = await sourceNode.handle.getFile();
+        const content = await file.text();
+
+        // Create new file in target
+        const newFileHandle = await targetFolder.folderHandle.getFileHandle(sourceNode.name, { create: true });
+        const writable = await newFileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+
+        // Delete old file
+        await sourceParentNode.folderHandle.removeEntry(sourceNode.name);
+
+        // Update tree
+        const newPath = `${targetFolder.path}/${sourceNode.name}`;
+        setState(prev => {
+          // Remove from old location
+          const removeFromTree = (root: FileNode): FileNode => {
+            if (root.children) {
+              return {
+                ...root,
+                children: root.children
+                  .filter(child => child.path !== sourceNode.path)
+                  .map(removeFromTree),
+              };
+            }
+            return root;
+          };
+
+          // Add to new location
+          const addToTree = (root: FileNode): FileNode => {
+            if (root.path === targetFolder.path) {
+              const movedNode: FileNode = {
+                ...sourceNode,
+                path: newPath,
+                handle: newFileHandle,
+              };
+              return {
+                ...root,
+                children: [...(root.children || []), movedNode].sort((a, b) => {
+                  // Sort folders before files, then alphabetically
+                  if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                  return a.name.localeCompare(b.name);
+                }),
+              };
+            }
+            if (root.children) {
+              return { ...root, children: root.children.map(addToTree) };
+            }
+            return root;
+          };
+
+          let newProjectRoot = prev.projectRoot ? removeFromTree(prev.projectRoot) : null;
+          newProjectRoot = newProjectRoot ? addToTree(newProjectRoot) : null;
+
+          // Update selected path if it was the moved file
+          const newSelectedPath = prev.selectedFilePath === sourceNode.path ? newPath : prev.selectedFilePath;
+
+          return { ...prev, projectRoot: newProjectRoot, selectedFilePath: newSelectedPath };
+        });
+
+        toast.success(`Moved ${sourceNode.name} to ${targetFolder.name}`);
+      }
+    } catch (error) {
+      console.error('Failed to move:', error);
+      toast.error(`Failed to move: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [state.projectRoot]);
+
   // Handle workspace changes for test steps
-  const handleWorkspaceChange = useCallback((steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>) => {
+  const handleWorkspaceChange = useCallback((steps: unknown[], testName?: string, testData?: Array<{ name?: string; values: Record<string, unknown> }>, softAssertions?: boolean) => {
     setState(prev => {
       // If editing folder hooks, update folder hooks state
       if (prev.editingFolderHooks) {
@@ -1140,6 +1275,8 @@ export default function App() {
         ...(testName && { name: testName }),
         // Update data if provided, or remove it if empty/undefined
         ...(testData !== undefined && { data: testData.length > 0 ? testData : undefined }),
+        // Update soft assertions if provided
+        ...(softAssertions !== undefined && { softAssertions }),
       };
       return {
         ...prev,
@@ -1583,7 +1720,28 @@ export default function App() {
         return;
       }
 
-      setState(prev => ({ ...prev, results: data, isRunning: false }));
+      // Update failedFiles and failedTestsMap based on results
+      const hasFailed = data.some((r: TestResult) => r.status !== 'passed');
+      const newFailedTests = new Set<string>();
+      data.forEach((r: TestResult) => {
+        if (r.status !== 'passed') {
+          newFailedTests.add(r.testId);
+        }
+      });
+      setState(prev => {
+        const newFailedFiles = new Set(prev.failedFiles);
+        const newFailedTestsMap = new Map(prev.failedTestsMap);
+        if (prev.selectedFilePath) {
+          if (hasFailed) {
+            newFailedFiles.add(prev.selectedFilePath);
+            newFailedTestsMap.set(prev.selectedFilePath, newFailedTests);
+          } else {
+            newFailedFiles.delete(prev.selectedFilePath);
+            newFailedTestsMap.delete(prev.selectedFilePath);
+          }
+        }
+        return { ...prev, results: data, isRunning: false, failedFiles: newFailedFiles, failedTestsMap: newFailedTestsMap };
+      });
     } catch (err) {
       console.error('Failed to run tests:', err);
       setState(prev => ({ ...prev, isRunning: false }));
@@ -1625,13 +1783,165 @@ export default function App() {
         return;
       }
 
-      setState(prev => ({ ...prev, results: data, isRunning: false, runningTestId: null }));
+      // Update failedFiles and failedTestsMap based on results
+      setState(prev => {
+        const newFailedFiles = new Set(prev.failedFiles);
+        const newFailedTestsMap = new Map(prev.failedTestsMap);
+        if (prev.selectedFilePath) {
+          const currentFailedTests = new Set(newFailedTestsMap.get(prev.selectedFilePath) || []);
+          // Update failed tests - add or remove based on this run's result
+          data.forEach((r: TestResult) => {
+            if (r.status !== 'passed') {
+              currentFailedTests.add(r.testId);
+            } else {
+              currentFailedTests.delete(r.testId);
+            }
+          });
+          // Update the map and files
+          if (currentFailedTests.size > 0) {
+            newFailedTestsMap.set(prev.selectedFilePath, currentFailedTests);
+            newFailedFiles.add(prev.selectedFilePath);
+          } else {
+            newFailedTestsMap.delete(prev.selectedFilePath);
+            newFailedFiles.delete(prev.selectedFilePath);
+          }
+        }
+        return { ...prev, results: data, isRunning: false, runningTestId: null, failedFiles: newFailedFiles, failedTestsMap: newFailedTestsMap };
+      });
     } catch (err) {
       console.error('Failed to run test:', err);
       setState(prev => ({ ...prev, isRunning: false, runningTestId: null }));
       toast.error('Failed to run test. Make sure the server is running.');
     }
   }, [state.testFile, state.headless, state.projectRoot, state.selectedFilePath]);
+
+  // Run all tests in a folder (and subfolders)
+  const handleRunFolder = useCallback(async (folderNode: FileNode) => {
+    // Collect all test files from the folder recursively
+    const collectTestFiles = (node: FileNode): FileNode[] => {
+      const files: FileNode[] = [];
+      if (node.type === 'file' && node.testFile) {
+        files.push(node);
+      }
+      if (node.children) {
+        for (const child of node.children) {
+          files.push(...collectTestFiles(child));
+        }
+      }
+      return files;
+    };
+
+    const testFiles = collectTestFiles(folderNode);
+
+    if (testFiles.length === 0) {
+      toast.warning('No test files found in this folder');
+      return;
+    }
+
+    setState(prev => ({ ...prev, isRunning: true, runningTestId: null, results: [] }));
+    toast.info(`Running ${testFiles.length} test file(s)...`);
+
+    const allResults: TestResult[] = [];
+    const fileResults: Map<string, boolean> = new Map(); // path -> hasFailed
+    const fileFailedTests: Map<string, Set<string>> = new Map(); // path -> set of failed test IDs
+    let filesRun = 0;
+
+    try {
+      for (const fileNode of testFiles) {
+        if (!fileNode.testFile) continue;
+
+        filesRun++;
+        toast.info(`Running ${fileNode.name} (${filesRun}/${testFiles.length})...`);
+
+        // Collect folder hooks from the hierarchy for this file
+        const folderHooks = collectFolderHooks(state.projectRoot, fileNode.path);
+
+        const response = await fetch(`/api/run?headless=${state.headless}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            testFile: fileNode.testFile,
+            folderHooks: folderHooks.length > 0 ? folderHooks : undefined,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && Array.isArray(data)) {
+          // Add file name to each result for identification
+          const resultsWithFile = data.map((result: TestResult) => ({
+            ...result,
+            fileName: fileNode.name.replace('.testblocks.json', ''),
+          }));
+          allResults.push(...resultsWithFile);
+          // Track which tests failed in this file
+          const failedTestIds = new Set<string>();
+          data.forEach((r: TestResult) => {
+            if (r.status !== 'passed') {
+              failedTestIds.add(r.testId);
+            }
+          });
+          const hasFailed = failedTestIds.size > 0;
+          fileResults.set(fileNode.path, hasFailed);
+          if (hasFailed) {
+            fileFailedTests.set(fileNode.path, failedTestIds);
+          }
+        } else {
+          // Add error result for this file
+          allResults.push({
+            testId: `file-error-${fileNode.path}`,
+            testName: `${fileNode.name} (Error)`,
+            status: 'error',
+            duration: 0,
+            steps: [],
+            error: {
+              message: data.message || data.error || 'Unknown error',
+            },
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            fileName: fileNode.name.replace('.testblocks.json', ''),
+          } as TestResult);
+          fileResults.set(fileNode.path, true); // Error = failed
+        }
+
+        // Update results incrementally
+        setState(prev => ({ ...prev, results: [...allResults] }));
+      }
+
+      // Count passed/failed
+      const passed = allResults.filter(r => r.status === 'passed').length;
+      const failed = allResults.filter(r => r.status === 'failed' || r.status === 'error').length;
+
+      if (failed > 0) {
+        toast.error(`Completed: ${passed} passed, ${failed} failed`);
+      } else {
+        toast.success(`All ${passed} tests passed!`);
+      }
+
+      // Update failedFiles and failedTestsMap based on all file results
+      setState(prev => {
+        const newFailedFiles = new Set(prev.failedFiles);
+        const newFailedTestsMap = new Map(prev.failedTestsMap);
+        for (const [filePath, hasFailed] of fileResults) {
+          if (hasFailed) {
+            newFailedFiles.add(filePath);
+            const failedTests = fileFailedTests.get(filePath);
+            if (failedTests) {
+              newFailedTestsMap.set(filePath, failedTests);
+            }
+          } else {
+            newFailedFiles.delete(filePath);
+            newFailedTestsMap.delete(filePath);
+          }
+        }
+        return { ...prev, isRunning: false, failedFiles: newFailedFiles, failedTestsMap: newFailedTestsMap };
+      });
+    } catch (err) {
+      console.error('Failed to run folder tests:', err);
+      setState(prev => ({ ...prev, isRunning: false, results: allResults }));
+      toast.error('Failed to run tests. Make sure the server is running.');
+    }
+  }, [state.headless, state.projectRoot]);
 
   // Update test name
   const handleTestNameChange = useCallback((name: string) => {
@@ -2225,7 +2535,10 @@ export default function App() {
             <input
               type="checkbox"
               checked={state.headless}
-              onChange={(e) => setState(prev => ({ ...prev, headless: e.target.checked }))}
+              onChange={(e) => {
+                localStorage.setItem('testblocks-headless', String(e.target.checked));
+                setState(prev => ({ ...prev, headless: e.target.checked }));
+              }}
             />
             <span>Headless</span>
           </label>
@@ -2315,6 +2628,11 @@ export default function App() {
                 onCreateFile={handleCreateFile}
                 onCreateFolder={handleCreateFolder}
                 onRename={handleRename}
+                onDelete={handleDelete}
+                onMove={handleMove}
+                onRunFolder={handleRunFolder}
+                isRunning={state.isRunning}
+                failedFiles={state.failedFiles}
               />
             </div>
           ) : (
@@ -2388,9 +2706,11 @@ export default function App() {
                       >
                         <div className="test-item-content">
                           <div className="test-item-name">
-                            {result && (
+                            {result ? (
                               <span className={`status-dot ${result.status}`} />
-                            )}
+                            ) : state.selectedFilePath && state.failedTestsMap.get(state.selectedFilePath)?.has(test.id) ? (
+                              <span className="status-dot failed" title="Failed in previous run" />
+                            ) : null}
                             {test.name}
                             {test.data && test.data.length > 0 && (
                               <span className="data-driven-badge" title={`Data-driven: ${test.data.length} iterations`}>
@@ -2553,6 +2873,7 @@ export default function App() {
               testName={state.editorTab === 'test' ? selectedTest?.name : getEditorTitle()}
               lifecycleType={state.editorTab !== 'test' ? state.editorTab : undefined}
               testData={state.editorTab === 'test' ? selectedTest?.data : undefined}
+              softAssertions={state.editorTab === 'test' ? selectedTest?.softAssertions : undefined}
               projectRoot={state.projectRoot}
               currentFilePath={state.selectedFilePath || undefined}
             />
@@ -2575,7 +2896,17 @@ export default function App() {
             </button>
             {!state.resultsPanelCollapsed && (
               <>
-                <h2>Results</h2>
+                <h2>
+                  Results
+                  {state.results.length > 0 && (
+                    <span className="results-summary">
+                      <span className="passed-count">{state.results.filter(r => r.status === 'passed').length} passed</span>
+                      {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
+                        <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
+                      )}
+                    </span>
+                  )}
+                </h2>
                 {state.results.length > 0 && (
                   <div className="results-actions">
                     <button
@@ -2614,6 +2945,9 @@ export default function App() {
                     <span className={`status-indicator ${result.status}`} />
                     {result.isLifecycle && (
                       <span className="lifecycle-badge">{result.lifecycleType}</span>
+                    )}
+                    {(result as TestResult & { fileName?: string }).fileName && (
+                      <span className="result-file-name">{(result as TestResult & { fileName?: string }).fileName} /</span>
                     )}
                     <span className="result-test-name">{result.testName}</span>
                     <span className="result-duration">{result.duration}ms</span>
@@ -2663,22 +2997,6 @@ export default function App() {
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
-}
-
-// Helper to find a node by path
-function findNodeByPath(root: FileNode | null, path: string | null): FileNode | null {
-  if (!root || !path) return null;
-
-  if (root.path === path) return root;
-
-  if (root.children) {
-    for (const child of root.children) {
-      const found = findNodeByPath(child, path);
-      if (found) return found;
-    }
-  }
-
-  return null;
 }
 
 // Helper to collect folder hooks from root to a file's parent folder

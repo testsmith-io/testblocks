@@ -13,8 +13,10 @@ import {
   ProcedureDefinition,
   BlockDefinition,
   TestDataSet,
+  SoftAssertionError,
   getBlock,
   registerBlock,
+  registerProcedure,
 } from '../core';
 
 // Parse CSV content into TestDataSet array
@@ -75,6 +77,7 @@ export interface ExecutorOptions {
   plugins?: Plugin[];
   testIdAttribute?: string;
   baseDir?: string; // Base directory for resolving relative file paths (e.g., dataFile)
+  procedures?: Record<string, ProcedureDefinition>; // Project-level procedures from globals
 }
 
 export class TestExecutor {
@@ -83,6 +86,7 @@ export class TestExecutor {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private plugins: Map<string, Plugin> = new Map();
+  private projectProcedures: Map<string, ProcedureDefinition> = new Map();
 
   constructor(options: ExecutorOptions = {}) {
     this.options = {
@@ -96,6 +100,14 @@ export class TestExecutor {
       options.plugins.forEach(plugin => {
         this.plugins.set(plugin.name, plugin);
       });
+    }
+
+    // Register project-level procedures from options
+    if (options.procedures) {
+      for (const [name, procedure] of Object.entries(options.procedures)) {
+        this.projectProcedures.set(name, procedure);
+      }
+      this.registerCustomBlocksFromProcedures(options.procedures);
     }
   }
 
@@ -165,10 +177,18 @@ export class TestExecutor {
     }
 
     // Create shared execution context for lifecycle hooks
+    // Merge project-level and file-level procedures (file takes precedence)
+    const mergedProcedures = new Map(this.projectProcedures);
+    if (testFile.procedures) {
+      for (const [name, proc] of Object.entries(testFile.procedures)) {
+        mergedProcedures.set(name, proc);
+      }
+    }
+
     const sharedContext: ExecutionContext = {
       variables: new Map(Object.entries({
         ...this.resolveVariableDefaults(testFile.variables),
-        ...this.options.variables,
+        ...this.resolveVariableDefaults(this.options.variables),
       })),
       results: [],
       browser: this.browser,
@@ -176,7 +196,10 @@ export class TestExecutor {
       logger: this.createLogger(),
       plugins: this.plugins,
       testIdAttribute: this.options.testIdAttribute,
+      procedures: mergedProcedures,
     };
+
+    let beforeAllFailed = false;
 
     try {
       // Run beforeAll hooks
@@ -190,25 +213,46 @@ export class TestExecutor {
         results.push(beforeAllResult);
 
         if (beforeAllResult.status === 'failed' || beforeAllResult.status === 'error') {
-          // Don't run tests if beforeAll failed
-          return results;
+          // Don't run tests if beforeAll failed, but still run afterAll
+          beforeAllFailed = true;
         }
       }
 
-      // Run each test with beforeEach/afterEach
-      for (const test of testFile.tests) {
-        // Load data from file if specified
-        let testData = test.data;
-        if (test.dataFile && !testData) {
-          testData = this.loadDataFromFile(test.dataFile);
-        }
+      // Only run tests if beforeAll succeeded
+      if (!beforeAllFailed) {
+        // Run each test with beforeEach/afterEach
+        for (const test of testFile.tests) {
+          // Load data from file if specified
+          let testData = test.data;
+          if (test.dataFile && !testData) {
+            testData = this.loadDataFromFile(test.dataFile);
+          }
 
-        // Check if test has data-driven sets
-        if (testData && testData.length > 0) {
-          // Run test for each data set
-          for (let i = 0; i < testData.length; i++) {
-            const dataSet = testData[i];
+          // Check if test has data-driven sets
+          if (testData && testData.length > 0) {
+            // Run test for each data set
+            for (let i = 0; i < testData.length; i++) {
+              const dataSet = testData[i];
 
+              // Run suite-level beforeEach
+              if (testFile.beforeEach && testFile.beforeEach.length > 0) {
+                for (const step of testFile.beforeEach) {
+                  await this.runStep(step, sharedContext);
+                }
+              }
+
+              const result = await this.runTestWithData(test, testFile.variables, dataSet, i, sharedContext);
+              results.push(result);
+
+              // Run suite-level afterEach
+              if (testFile.afterEach && testFile.afterEach.length > 0) {
+                for (const step of testFile.afterEach) {
+                  await this.runStep(step, sharedContext);
+                }
+              }
+            }
+          } else {
+            // Run test once without data
             // Run suite-level beforeEach
             if (testFile.beforeEach && testFile.beforeEach.length > 0) {
               for (const step of testFile.beforeEach) {
@@ -216,7 +260,7 @@ export class TestExecutor {
               }
             }
 
-            const result = await this.runTestWithData(test, testFile.variables, dataSet, i, sharedContext);
+            const result = await this.runTest(test, testFile.variables, sharedContext);
             results.push(result);
 
             // Run suite-level afterEach
@@ -226,38 +270,41 @@ export class TestExecutor {
               }
             }
           }
-        } else {
-          // Run test once without data
-          // Run suite-level beforeEach
-          if (testFile.beforeEach && testFile.beforeEach.length > 0) {
-            for (const step of testFile.beforeEach) {
-              await this.runStep(step, sharedContext);
-            }
-          }
-
-          const result = await this.runTest(test, testFile.variables, sharedContext);
-          results.push(result);
-
-          // Run suite-level afterEach
-          if (testFile.afterEach && testFile.afterEach.length > 0) {
-            for (const step of testFile.afterEach) {
-              await this.runStep(step, sharedContext);
-            }
-          }
+        }
+      }
+    } finally {
+      // Always run afterAll hooks, even if beforeAll failed
+      // This ensures cleanup happens regardless of setup failures
+      if (testFile.afterAll && testFile.afterAll.length > 0) {
+        sharedContext.logger.info('Running afterAll hooks...');
+        try {
+          const afterAllResult = await this.runLifecycleSteps(
+            testFile.afterAll,
+            'afterAll',
+            sharedContext
+          );
+          results.push(afterAllResult);
+        } catch (afterAllError) {
+          // Log but don't throw - we still want cleanup to complete
+          sharedContext.logger.error('afterAll hook failed', (afterAllError as Error).message);
+          results.push({
+            testId: 'lifecycle-afterAll',
+            testName: 'afterAll',
+            status: 'error',
+            duration: 0,
+            steps: [],
+            error: {
+              message: (afterAllError as Error).message,
+              stack: (afterAllError as Error).stack,
+            },
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            isLifecycle: true,
+            lifecycleType: 'afterAll',
+          });
         }
       }
 
-      // Run afterAll hooks
-      if (testFile.afterAll && testFile.afterAll.length > 0) {
-        sharedContext.logger.info('Running afterAll hooks...');
-        const afterAllResult = await this.runLifecycleSteps(
-          testFile.afterAll,
-          'afterAll',
-          sharedContext
-        );
-        results.push(afterAllResult);
-      }
-    } finally {
       await this.cleanup();
     }
 
@@ -309,7 +356,10 @@ export class TestExecutor {
   }
 
   private registerCustomBlocksFromProcedures(procedures: Record<string, ProcedureDefinition>): void {
-    Object.values(procedures).forEach(proc => {
+    Object.entries(procedures).forEach(([name, proc]) => {
+      // Register in the procedure registry so getProcedure() can find it
+      registerProcedure(name, proc);
+
       if (!proc.steps || proc.steps.length === 0) return;
 
       const blockType = `custom_${proc.name.toLowerCase().replace(/\s+/g, '_')}`;
@@ -334,10 +384,19 @@ export class TestExecutor {
           context.logger.info(`Executing custom block: ${proc.name}`);
 
           // Set procedure parameters in context.variables so ${paramName} references work
+          // Resolve any ${variable} placeholders in the parameter values first
           (proc.params || []).forEach(p => {
-            const value = params[p.name.toUpperCase()];
+            const paramKey = p.name.toUpperCase();
+            let value = params[paramKey];
             if (value !== undefined) {
+              // Resolve variable placeholders like ${email} from context/currentData
+              if (typeof value === 'string') {
+                value = TestExecutor.resolveVariablePlaceholders(value, context);
+              }
               context.variables.set(p.name, value);
+              context.logger.debug(`Set procedure param: ${p.name} = "${value}"`);
+            } else {
+              context.logger.warn(`Procedure param not found in params: ${paramKey} (available: ${Object.keys(params).join(', ')})`);
             }
           });
 
@@ -367,7 +426,7 @@ export class TestExecutor {
       ? Object.fromEntries(sharedContext.variables)
       : {
           ...this.resolveVariableDefaults(fileVariables),
-          ...this.options.variables,
+          ...this.resolveVariableDefaults(this.options.variables),
         };
 
     const context: ExecutionContext = {
@@ -378,6 +437,11 @@ export class TestExecutor {
       logger: this.createLogger(),
       plugins: this.plugins,
       testIdAttribute: this.options.testIdAttribute,
+      // Inherit procedures from shared context
+      procedures: sharedContext?.procedures || new Map(),
+      // Enable soft assertions if configured on the test
+      softAssertions: test.softAssertions || false,
+      softAssertionErrors: [],
     };
 
     // Run beforeTest hooks
@@ -389,6 +453,7 @@ export class TestExecutor {
 
     let testStatus: 'passed' | 'failed' | 'error' = 'passed';
     let testError: { message: string; stack?: string } | undefined;
+    let collectedSoftErrors: SoftAssertionError[] = [];
 
     try {
       // Execute steps from Blockly serialization format
@@ -401,8 +466,21 @@ export class TestExecutor {
         if (stepResult.status === 'failed' || stepResult.status === 'error') {
           testStatus = stepResult.status;
           testError = stepResult.error;
-          break;
+          // In soft assertion mode, continue executing remaining steps
+          if (!context.softAssertions) {
+            break;
+          }
         }
+      }
+
+      // Check for soft assertion errors at the end of the test
+      collectedSoftErrors = context.softAssertionErrors || [];
+      if (collectedSoftErrors.length > 0 && testStatus === 'passed') {
+        testStatus = 'failed';
+        const errorMessages = collectedSoftErrors.map((e, i) => `  ${i + 1}. ${e.message}`).join('\n');
+        testError = {
+          message: `${collectedSoftErrors.length} soft assertion(s) failed:\n${errorMessages}`,
+        };
       }
     } catch (error) {
       testStatus = 'error';
@@ -421,6 +499,7 @@ export class TestExecutor {
       error: testError,
       startedAt,
       finishedAt: new Date().toISOString(),
+      softAssertionErrors: collectedSoftErrors.length > 0 ? collectedSoftErrors : undefined,
     };
 
     // Run afterTest hooks
@@ -455,7 +534,7 @@ export class TestExecutor {
       ? Object.fromEntries(sharedContext.variables)
       : {
           ...this.resolveVariableDefaults(fileVariables),
-          ...this.options.variables,
+          ...this.resolveVariableDefaults(this.options.variables),
         };
 
     const context: ExecutionContext = {
@@ -466,8 +545,13 @@ export class TestExecutor {
       logger: this.createLogger(),
       plugins: this.plugins,
       testIdAttribute: this.options.testIdAttribute,
+      // Inherit procedures from shared context
+      procedures: sharedContext?.procedures || new Map(),
       currentData: dataSet,
       dataIndex,
+      // Enable soft assertions if configured on the test
+      softAssertions: test.softAssertions || false,
+      softAssertionErrors: [],
     };
 
     // Inject data values into variables
@@ -484,6 +568,7 @@ export class TestExecutor {
 
     let testStatus: 'passed' | 'failed' | 'error' = 'passed';
     let testError: { message: string; stack?: string } | undefined;
+    let collectedSoftErrors: SoftAssertionError[] = [];
 
     try {
       // Execute steps from Blockly serialization format
@@ -496,8 +581,21 @@ export class TestExecutor {
         if (stepResult.status === 'failed' || stepResult.status === 'error') {
           testStatus = stepResult.status;
           testError = stepResult.error;
-          break;
+          // In soft assertion mode, continue executing remaining steps
+          if (!context.softAssertions) {
+            break;
+          }
         }
+      }
+
+      // Check for soft assertion errors at the end of the test
+      collectedSoftErrors = context.softAssertionErrors || [];
+      if (collectedSoftErrors.length > 0 && testStatus === 'passed') {
+        testStatus = 'failed';
+        const errorMessages = collectedSoftErrors.map((e, i) => `  ${i + 1}. ${e.message}`).join('\n');
+        testError = {
+          message: `${collectedSoftErrors.length} soft assertion(s) failed:\n${errorMessages}`,
+        };
       }
     } catch (error) {
       testStatus = 'error';
@@ -516,6 +614,7 @@ export class TestExecutor {
       error: testError,
       startedAt,
       finishedAt: new Date().toISOString(),
+      softAssertionErrors: collectedSoftErrors.length > 0 ? collectedSoftErrors : undefined,
     };
 
     // Run afterTest hooks
@@ -659,6 +758,37 @@ export class TestExecutor {
           }
         }
       }
+
+      // Handle procedure calls (procedure_call block)
+      if (output && typeof output === 'object' && 'procedureCall' in output) {
+        const procOutput = output as {
+          procedureCall: boolean;
+          name: string;
+          args: Record<string, unknown>;
+          procedure: ProcedureDefinition;
+        };
+
+        // Set procedure arguments as variables (resolve any ${var} placeholders first)
+        for (const [argName, argValue] of Object.entries(procOutput.args)) {
+          let resolvedValue = argValue;
+          if (typeof argValue === 'string') {
+            resolvedValue = TestExecutor.resolveVariablePlaceholders(argValue, context);
+          }
+          context.variables.set(argName, resolvedValue);
+        }
+
+        // Run the procedure's steps
+        if (procOutput.procedure.steps) {
+          for (const childStep of procOutput.procedure.steps) {
+            const childResult = await this.runStep(childStep, context);
+            if (childResult.status === 'failed' || childResult.status === 'error') {
+              status = childResult.status;
+              error = childResult.error;
+              break;
+            }
+          }
+        }
+      }
     } catch (err) {
       status = 'failed';
       error = {
@@ -707,14 +837,20 @@ export class TestExecutor {
     const resolved: Record<string, unknown> = {};
 
     for (const [key, value] of Object.entries(params)) {
-      if (value && typeof value === 'object' && 'type' in value) {
-        // This is a connected block - execute it to get the value
+      if (value && typeof value === 'object' && 'type' in value && 'id' in value) {
+        // This is a connected block (has both 'type' and 'id') - execute it to get the value
         const nestedStep = value as TestStep;
         const blockDef = getBlock(nestedStep.type);
 
         if (blockDef) {
           const nestedParams = await this.resolveParams(nestedStep.params || {}, context);
-          resolved[key] = await blockDef.execute(nestedParams, context);
+          const result = await blockDef.execute(nestedParams, context);
+          // Value blocks return { _value: actualValue, ... } - extract the actual value
+          if (result && typeof result === 'object' && '_value' in result) {
+            resolved[key] = (result as { _value: unknown })._value;
+          } else {
+            resolved[key] = result;
+          }
         }
       } else {
         resolved[key] = value;
@@ -773,6 +909,45 @@ export class TestExecutor {
       }
     }
     return resolved;
+  }
+
+  /**
+   * Resolve ${variable} placeholders in a string using context variables and currentData
+   */
+  private static resolveVariablePlaceholders(text: string, context: ExecutionContext): string {
+    if (typeof text !== 'string') return text;
+
+    return text.replace(/\$\{([\w.]+)\}/g, (match, path) => {
+      const parts = path.split('.');
+      const varName = parts[0];
+
+      // Check currentData first (for data-driven tests)
+      if (context.currentData?.values[varName] !== undefined) {
+        let value: unknown = context.currentData.values[varName];
+        // Handle dot notation for nested access
+        if (parts.length > 1 && value !== null && typeof value === 'object') {
+          for (let i = 1; i < parts.length; i++) {
+            if (value === undefined || value === null) break;
+            value = (value as Record<string, unknown>)[parts[i]];
+          }
+        }
+        if (value !== undefined && value !== null) {
+          return typeof value === 'object' ? JSON.stringify(value) : String(value);
+        }
+      }
+
+      // Then check context variables
+      let value: unknown = context.variables.get(varName);
+      if (parts.length > 1 && value !== undefined && value !== null) {
+        for (let i = 1; i < parts.length; i++) {
+          if (value === undefined || value === null) break;
+          value = (value as Record<string, unknown>)[parts[i]];
+        }
+      }
+
+      if (value === undefined || value === null) return match;
+      return typeof value === 'object' ? JSON.stringify(value) : String(value);
+    });
   }
 
   private createLogger(): Logger {
