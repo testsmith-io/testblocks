@@ -450,7 +450,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.2',
+            '@testsmith/testblocks': '^0.8.3',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
