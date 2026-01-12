@@ -642,6 +642,18 @@ export class TestExecutor {
       };
     }
 
+    // Capture screenshot on failure if page is available
+    let screenshot: string | undefined;
+    if (status === 'failed' && this.page) {
+      try {
+        const buffer = await this.page.screenshot({ type: 'png' });
+        screenshot = `data:image/png;base64,${buffer.toString('base64')}`;
+      } catch (screenshotError) {
+        // Silently ignore screenshot errors
+        console.debug('Failed to capture screenshot:', screenshotError);
+      }
+    }
+
     const result: StepResult = {
       stepId: step.id,
       stepType: step.type,
@@ -649,6 +661,7 @@ export class TestExecutor {
       duration: Date.now() - startTime,
       output,
       error,
+      screenshot,
     };
 
     for (const plugin of this.plugins.values()) {
