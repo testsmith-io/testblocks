@@ -273,63 +273,68 @@ program
       const allResults: { file: string; results: TestResult[] }[] = [];
       let hasFailures = false;
 
-      for (const file of files) {
-        // Skip _hooks.testblocks.json files - these are folder hooks, not test files
-        const basename = path.basename(file);
-        if (basename === '_hooks.testblocks.json') {
-          continue;
-        }
+      try {
+        for (const file of files) {
+          // Skip _hooks.testblocks.json files - these are folder hooks, not test files
+          const basename = path.basename(file);
+          if (basename === '_hooks.testblocks.json') {
+            continue;
+          }
 
-        console.log(`Running: ${basename}`);
+          console.log(`Running: ${basename}`);
 
-        const content = fs.readFileSync(file, 'utf-8');
-        let testFile = JSON.parse(content) as TestFile;
+          const content = fs.readFileSync(file, 'utf-8');
+          let testFile = JSON.parse(content) as TestFile;
 
-        // Skip files that have no tests array (e.g., hooks-only files)
-        if (!testFile.tests || !Array.isArray(testFile.tests)) {
-          console.log('  (no tests in file)\n');
-          continue;
-        }
+          // Skip files that have no tests array (e.g., hooks-only files)
+          if (!testFile.tests || !Array.isArray(testFile.tests)) {
+            console.log('  (no tests in file)\n');
+            continue;
+          }
 
-        // Load and merge folder hooks
-        const globalsDir = fs.existsSync(globalsPath) ? path.dirname(globalsPath) : null;
-        const folderHooks = loadFolderHooks(file, globalsDir);
-        if (folderHooks.length > 0) {
-          testFile = mergeFolderHooksIntoTestFile(testFile, folderHooks);
-        }
+          // Load and merge folder hooks
+          const globalsDir = fs.existsSync(globalsPath) ? path.dirname(globalsPath) : null;
+          const folderHooks = loadFolderHooks(file, globalsDir);
+          if (folderHooks.length > 0) {
+            testFile = mergeFolderHooksIntoTestFile(testFile, folderHooks);
+          }
 
-        // Apply filter if specified
-        if (options.filter) {
-          const filterRegex = new RegExp(options.filter, 'i');
-          testFile.tests = testFile.tests.filter(t => filterRegex.test(t.name));
-        }
+          // Apply filter if specified
+          if (options.filter) {
+            const filterRegex = new RegExp(options.filter, 'i');
+            testFile.tests = testFile.tests.filter(t => filterRegex.test(t.name));
+          }
 
-        if (testFile.tests.length === 0) {
-          console.log('  (no tests match filter)\n');
-          continue;
-        }
+          if (testFile.tests.length === 0) {
+            console.log('  (no tests match filter)\n');
+            continue;
+          }
 
-        const executor = new TestExecutor(executorOptions);
-        const results = await executor.runTestFile(testFile);
+          const executor = new TestExecutor(executorOptions);
+          const results = await executor.runTestFile(testFile);
 
-        allResults.push({ file, results });
+          allResults.push({ file, results });
 
-        // Report results to all reporters
-        reporters.forEach(r => r.onTestFileComplete(file, testFile, results));
+          // Report results to all reporters
+          reporters.forEach(r => r.onTestFileComplete(file, testFile, results));
 
-        // Check for failures
-        const failed = results.some(r => r.status !== 'passed');
-        if (failed) {
-          hasFailures = true;
-          if (options.failFast) {
-            console.log('\nStopping due to --fail-fast\n');
-            break;
+          // Check for failures
+          const failed = results.some(r => r.status !== 'passed');
+          if (failed) {
+            hasFailures = true;
+            if (options.failFast) {
+              console.log('\nStopping due to --fail-fast\n');
+              break;
+            }
           }
         }
+      } catch (error) {
+        console.error('Error during test execution:', (error as Error).message);
+        hasFailures = true;
+      } finally {
+        // Always generate final reports, even on errors
+        reporters.forEach(r => r.onComplete(allResults));
       }
-
-      // Generate final reports
-      reporters.forEach(r => r.onComplete(allResults));
 
       // Exit with appropriate code
       process.exit(hasFailures ? 1 : 0);
@@ -451,7 +456,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.4',
+            '@testsmith/testblocks': '^0.8.5',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -596,7 +601,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        run: npx testblocks install-browsers
 
       - name: Run tests
         run: npm run test:ci
@@ -633,9 +638,31 @@ jobs:
     console.log('Next steps:');
     console.log('  1. cd ' + (directory === '.' ? '' : directory));
     console.log('  2. npm install');
-    console.log('  3. npm test\n');
+    console.log('  3. npx testblocks install-browsers');
+    console.log('  4. npm test\n');
     console.log('To open the visual test editor:');
     console.log('  testblocks serve\n');
+  });
+
+program
+  .command('install-browsers')
+  .description('Install Playwright browsers for running web tests')
+  .option('--browser <browser>', 'Browser to install (chromium, firefox, webkit, all)', 'chromium')
+  .action(async (options) => {
+    const { execSync } = await import('child_process');
+    const browser = options.browser === 'all' ? '' : options.browser;
+
+    console.log(`Installing Playwright browser${browser ? `: ${browser}` : 's'}...`);
+
+    try {
+      // Use execSync to run playwright install with inherited stdio
+      const command = `npx playwright install${browser ? ` ${browser}` : ''} --with-deps`;
+      execSync(command, { stdio: 'inherit' });
+      console.log('\n✓ Browsers installed successfully!');
+    } catch (error) {
+      console.error('\nFailed to install browsers:', error instanceof Error ? error.message : error);
+      process.exit(1);
+    }
   });
 
 program
