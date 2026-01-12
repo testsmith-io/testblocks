@@ -156,7 +156,7 @@ program
   .argument('<patterns...>', 'Test file patterns (glob supported)')
   .option('-H, --headed', 'Run tests in headed mode (show browser)', false)
   .option('-t, --timeout <ms>', 'Test timeout in milliseconds', '30000')
-  .option('-r, --reporter <type>', 'Reporter type: console, json, junit, html', 'console')
+  .option('-r, --reporter <types>', 'Reporter types (comma-separated): console, json, junit, html', 'console')
   .option('-o, --output <dir>', 'Output directory for reports', './testblocks-results')
   .option('-b, --base-url <url>', 'Base URL for relative URLs')
   .option('-v, --var <vars...>', 'Variables in key=value format')
@@ -266,8 +266,8 @@ program
         procedures: globalProcedures,
       };
 
-      // Create reporter
-      const reporter = createReporter(options.reporter, options.output);
+      // Create reporters (supports multiple, comma-separated)
+      const reporters = createReporters(options.reporter, options.output);
 
       // Run tests
       const allResults: { file: string; results: TestResult[] }[] = [];
@@ -314,8 +314,8 @@ program
 
         allResults.push({ file, results });
 
-        // Report results
-        reporter.onTestFileComplete(file, testFile, results);
+        // Report results to all reporters
+        reporters.forEach(r => r.onTestFileComplete(file, testFile, results));
 
         // Check for failures
         const failed = results.some(r => r.status !== 'passed');
@@ -328,8 +328,8 @@ program
         }
       }
 
-      // Generate final report
-      reporter.onComplete(allResults);
+      // Generate final reports
+      reporters.forEach(r => r.onComplete(allResults));
 
       // Exit with appropriate code
       process.exit(hasFailures ? 1 : 0);
@@ -448,9 +448,10 @@ program
           'test:headed': 'testblocks run tests/**/*.testblocks.json --headed',
           'test:html': 'testblocks run tests/**/*.testblocks.json -r html -o reports',
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
+          'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.3',
+            '@testsmith/testblocks': '^0.8.4',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -598,15 +599,31 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run tests
-        run: npm test
+        run: npm run test:ci
 
-      - name: Upload test reports
+      - name: Upload HTML report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-reports
-          path: reports/
+          name: html-report
+          path: reports/*.html
           retention-days: 30
+
+      - name: Upload JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-report
+          path: reports/*.xml
+          retention-days: 30
+
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: reports/*.xml
+          reporter: java-junit
 `;
       fs.writeFileSync(workflowPath, workflow);
       console.log('  Created: .github/workflows/testblocks.yml');
@@ -686,18 +703,38 @@ program
     });
   });
 
-function createReporter(type: string, outputDir: string): Reporter {
-  switch (type) {
-    case 'json':
-      return new JSONReporter(outputDir);
-    case 'junit':
-      return new JUnitReporter(outputDir);
-    case 'html':
-      return new HTMLReporter(outputDir);
-    case 'console':
-    default:
-      return new ConsoleReporter();
+function createReporters(types: string, outputDir: string): Reporter[] {
+  const reporterTypes = types.split(',').map(t => t.trim().toLowerCase());
+  const reporters: Reporter[] = [];
+
+  for (const type of reporterTypes) {
+    switch (type) {
+      case 'json':
+        reporters.push(new JSONReporter(outputDir));
+        break;
+      case 'junit':
+        reporters.push(new JUnitReporter(outputDir));
+        break;
+      case 'html':
+        reporters.push(new HTMLReporter(outputDir));
+        break;
+      case 'console':
+        reporters.push(new ConsoleReporter());
+        break;
+      default:
+        console.warn(`Unknown reporter type: ${type}, using console`);
+        if (!reporters.some(r => r instanceof ConsoleReporter)) {
+          reporters.push(new ConsoleReporter());
+        }
+    }
   }
+
+  // Always include console reporter if not already included
+  if (!reporters.some(r => r instanceof ConsoleReporter)) {
+    reporters.unshift(new ConsoleReporter());
+  }
+
+  return reporters;
 }
 
 function validateTestFile(testFile: TestFile): string[] {
