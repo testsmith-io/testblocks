@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
-import { TestFile, TestResult, ProcedureDefinition } from '../core';
+import { TestFile, TestResult, ProcedureDefinition, FolderHooks } from '../core';
 import { TestExecutor, ExecutorOptions } from './executor';
 import { ConsoleReporter, JUnitReporter, JSONReporter, HTMLReporter, Reporter } from './reporters';
 import { startServer } from '../server/startServer';
@@ -69,6 +69,78 @@ function findPluginsDir(startDir: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Load folder hooks from a test file's directory up to the root globals directory
+ * Returns hooks in order from outermost folder to innermost
+ */
+function loadFolderHooks(testFilePath: string, globalsDir: string | null): FolderHooks[] {
+  let currentDir = path.dirname(path.resolve(testFilePath));
+  const stopDir = globalsDir ? path.resolve(globalsDir) : null;
+
+  // Collect hooks from innermost to outermost
+  const collectedHooks: FolderHooks[] = [];
+
+  while (currentDir) {
+    const hooksPath = path.join(currentDir, '_hooks.testblocks.json');
+    if (fs.existsSync(hooksPath)) {
+      try {
+        const content = fs.readFileSync(hooksPath, 'utf-8');
+        const hooksFile = JSON.parse(content) as FolderHooks;
+        collectedHooks.push(hooksFile);
+      } catch (e) {
+        console.warn(`Warning: Could not load hooks from ${hooksPath}: ${(e as Error).message}`);
+      }
+    }
+
+    // Stop at globals directory or root
+    if (stopDir && currentDir === stopDir) break;
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break; // Reached root
+    currentDir = parentDir;
+  }
+
+  // Reverse to get outermost-to-innermost order
+  return collectedHooks.reverse();
+}
+
+/**
+ * Merge folder hooks into a test file
+ * - beforeAll/beforeEach: parent hooks run first
+ * - afterAll/afterEach: child hooks run first (reverse order)
+ */
+function mergeFolderHooksIntoTestFile(testFile: TestFile, folderHooks: FolderHooks[]): TestFile {
+  if (!folderHooks || folderHooks.length === 0) {
+    return testFile;
+  }
+
+  const beforeAllSteps: unknown[] = [];
+  const afterAllSteps: unknown[] = [];
+  const beforeEachSteps: unknown[] = [];
+  const afterEachSteps: unknown[] = [];
+
+  // Parent to child order for beforeAll/beforeEach
+  for (const hooks of folderHooks) {
+    if (hooks.beforeAll) beforeAllSteps.push(...hooks.beforeAll);
+    if (hooks.beforeEach) beforeEachSteps.push(...hooks.beforeEach);
+  }
+
+  // Child to parent order for afterAll/afterEach
+  for (let i = folderHooks.length - 1; i >= 0; i--) {
+    const hooks = folderHooks[i];
+    if (hooks.afterAll) afterAllSteps.unshift(...hooks.afterAll);
+    if (hooks.afterEach) afterEachSteps.unshift(...hooks.afterEach);
+  }
+
+  // Merge with test file hooks
+  return {
+    ...testFile,
+    beforeAll: [...beforeAllSteps, ...(testFile.beforeAll || [])] as TestFile['beforeAll'],
+    afterAll: [...(testFile.afterAll || []), ...afterAllSteps] as TestFile['afterAll'],
+    beforeEach: [...beforeEachSteps, ...(testFile.beforeEach || [])] as TestFile['beforeEach'],
+    afterEach: [...(testFile.afterEach || []), ...afterEachSteps] as TestFile['afterEach'],
+  };
 }
 
 const program = new Command();
@@ -211,12 +283,19 @@ program
         console.log(`Running: ${basename}`);
 
         const content = fs.readFileSync(file, 'utf-8');
-        const testFile = JSON.parse(content) as TestFile;
+        let testFile = JSON.parse(content) as TestFile;
 
         // Skip files that have no tests array (e.g., hooks-only files)
         if (!testFile.tests || !Array.isArray(testFile.tests)) {
           console.log('  (no tests in file)\n');
           continue;
+        }
+
+        // Load and merge folder hooks
+        const globalsDir = fs.existsSync(globalsPath) ? path.dirname(globalsPath) : null;
+        const folderHooks = loadFolderHooks(file, globalsDir);
+        if (folderHooks.length > 0) {
+          testFile = mergeFolderHooksIntoTestFile(testFile, folderHooks);
         }
 
         // Apply filter if specified
@@ -371,7 +450,7 @@ program
           'test:junit': 'testblocks run tests/**/*.testblocks.json -r junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.1',
+            '@testsmith/testblocks': '^0.8.2',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
