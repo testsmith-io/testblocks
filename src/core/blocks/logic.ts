@@ -17,7 +17,12 @@ export const logicBlocks: BlockDefinition[] = [
     nextStatement: true,
     execute: async (params, context) => {
       const name = params.NAME as string;
-      const value = params.VALUE;
+      let value = params.VALUE;
+
+      // If the value is a block result with _value, extract just the value
+      if (value && typeof value === 'object' && '_value' in value) {
+        value = (value as { _value: unknown })._value;
+      }
 
       context.variables.set(name, value);
       context.logger.debug(`Set variable ${name} = ${JSON.stringify(value)}`);
