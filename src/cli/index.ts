@@ -257,6 +257,11 @@ program
       // Merge variables: globals first, then CLI overrides
       const variables: Record<string, unknown> = { ...globalVariables, ...cliVariables };
 
+      // If baseUrl is provided via CLI, add it to variables so ${baseUrl} resolves correctly
+      if (options.baseUrl) {
+        variables.baseUrl = options.baseUrl;
+      }
+
       // Create executor options
       const executorOptions: ExecutorOptions = {
         headless: !options.headed,
@@ -456,7 +461,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.8.6',
+            '@testsmith/testblocks': '^0.8.7',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
