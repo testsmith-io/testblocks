@@ -10,10 +10,18 @@ export function getTimestamp(): string {
 }
 
 /**
+ * Strip ANSI escape codes from a string
+ */
+export function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
+}
+
+/**
  * Escape XML special characters
  */
 export function escapeXml(str: string): string {
-  return str
+  return stripAnsi(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -25,7 +33,7 @@ export function escapeXml(str: string): string {
  * Escape HTML special characters
  */
 export function escapeHtml(str: string): string {
-  return str
+  return stripAnsi(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

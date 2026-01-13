@@ -4,21 +4,23 @@
 
 export interface PlaywrightLocator {
   click(options?: { timeout?: number }): Promise<void>;
-  fill(value: string): Promise<void>;
-  type(text: string, options?: { delay?: number }): Promise<void>;
-  selectOption(values: string | string[]): Promise<string[]>;
-  check(): Promise<void>;
-  uncheck(): Promise<void>;
-  hover(): Promise<void>;
-  focus(): Promise<void>;
-  press(key: string): Promise<void>;
-  textContent(): Promise<string | null>;
-  getAttribute(name: string): Promise<string | null>;
-  inputValue(): Promise<string>;
+  fill(value: string, options?: { timeout?: number }): Promise<void>;
+  type(text: string, options?: { delay?: number; timeout?: number }): Promise<void>;
+  pressSequentially(text: string, options?: { delay?: number; timeout?: number }): Promise<void>;
+  selectOption(values: string | string[], options?: { timeout?: number }): Promise<string[]>;
+  check(options?: { timeout?: number }): Promise<void>;
+  uncheck(options?: { timeout?: number }): Promise<void>;
+  hover(options?: { timeout?: number }): Promise<void>;
+  focus(options?: { timeout?: number }): Promise<void>;
+  press(key: string, options?: { timeout?: number }): Promise<void>;
+  textContent(options?: { timeout?: number }): Promise<string | null>;
+  getAttribute(name: string, options?: { timeout?: number }): Promise<string | null>;
+  inputValue(options?: { timeout?: number }): Promise<string>;
   isVisible(): Promise<boolean>;
   isEnabled(): Promise<boolean>;
   isChecked(): Promise<boolean>;
   count(): Promise<number>;
+  waitFor(options?: { state?: 'attached' | 'detached' | 'visible' | 'hidden'; timeout?: number }): Promise<void>;
 }
 
 export interface PlaywrightPage {
