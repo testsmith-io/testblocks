@@ -2934,6 +2934,9 @@ export default function App() {
                       {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
                         <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
                       )}
+                      {state.results.filter(r => r.status === 'skipped').length > 0 && (
+                        <span className="skipped-count">{state.results.filter(r => r.status === 'skipped').length} skipped</span>
+                      )}
                     </span>
                   )}
                 </h2>

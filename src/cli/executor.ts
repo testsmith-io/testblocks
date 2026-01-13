@@ -58,7 +58,10 @@ export class TestExecutor {
     this.browser = await chromium.launch({
       headless: this.options.headless,
     });
-    this.browserContext = await this.browser.newContext();
+    // Use consistent viewport size for headless and headed modes
+    this.browserContext = await this.browser.newContext({
+      viewport: { width: 1920, height: 1080 },
+    });
     this.page = await this.browserContext.newPage();
 
     if (this.options.timeout) {
