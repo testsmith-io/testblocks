@@ -19,8 +19,9 @@ export class JUnitReporter implements Reporter {
     this.allResults.push({ file, testFile, results });
 
     const passed = results.filter(r => r.status === 'passed').length;
-    const failed = results.filter(r => r.status !== 'passed').length;
-    console.log(`  ${passed} passed, ${failed} failed\n`);
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    const failed = results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length;
+    console.log(`  ${passed} passed, ${failed} failed, ${skipped} skipped\n`);
   }
 
   onComplete(allResults: { file: string; results: TestResult[] }[]): void {
@@ -40,7 +41,11 @@ export class JUnitReporter implements Reporter {
           0
         ),
         failed: allResults.reduce(
-          (sum, r) => sum + r.results.filter(t => t.status !== 'passed').length,
+          (sum, r) => sum + r.results.filter(t => t.status !== 'passed' && t.status !== 'skipped').length,
+          0
+        ),
+        skipped: allResults.reduce(
+          (sum, r) => sum + r.results.filter(t => t.status === 'skipped').length,
           0
         ),
         duration: allResults.reduce(
@@ -64,7 +69,11 @@ export function generateJUnitXML(data: ReportData): string {
 
   const totalTests = testFiles.reduce((sum, f) => sum + f.results.length, 0);
   const failures = testFiles.reduce(
-    (sum, f) => sum + f.results.filter(t => t.status !== 'passed').length,
+    (sum, f) => sum + f.results.filter(t => t.status !== 'passed' && t.status !== 'skipped').length,
+    0
+  );
+  const skipped = testFiles.reduce(
+    (sum, f) => sum + f.results.filter(t => t.status === 'skipped').length,
     0
   );
   const totalTime = testFiles.reduce(
@@ -73,20 +82,24 @@ export function generateJUnitXML(data: ReportData): string {
   ) / 1000;
 
   let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-  xml += `<testsuites tests="${totalTests}" failures="${failures}" time="${totalTime.toFixed(3)}">\n`;
+  xml += `<testsuites tests="${totalTests}" failures="${failures}" skipped="${skipped}" time="${totalTime.toFixed(3)}">\n`;
 
   for (const { file, testFile, results } of testFiles) {
     const suiteTests = results.length;
-    const suiteFailures = results.filter(r => r.status !== 'passed').length;
+    const suiteFailures = results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length;
+    const suiteSkipped = results.filter(r => r.status === 'skipped').length;
     const suiteTime = results.reduce((s, t) => s + t.duration, 0) / 1000;
 
-    xml += `  <testsuite name="${escapeXml(testFile.name)}" tests="${suiteTests}" failures="${suiteFailures}" time="${suiteTime.toFixed(3)}" file="${escapeXml(file)}">\n`;
+    xml += `  <testsuite name="${escapeXml(testFile.name)}" tests="${suiteTests}" failures="${suiteFailures}" skipped="${suiteSkipped}" time="${suiteTime.toFixed(3)}" file="${escapeXml(file)}">\n`;
 
     for (const result of results) {
       const testTime = result.duration / 1000;
       xml += `    <testcase name="${escapeXml(result.testName)}" classname="${escapeXml(testFile.name)}" time="${testTime.toFixed(3)}">\n`;
 
-      if (result.status !== 'passed' && result.error) {
+      if (result.status === 'skipped') {
+        const message = result.error?.message || 'Test skipped';
+        xml += `      <skipped message="${escapeXml(message)}"/>\n`;
+      } else if (result.status !== 'passed' && result.error) {
         xml += `      <failure message="${escapeXml(result.error.message)}">\n`;
         xml += `${escapeXml(result.error.stack || result.error.message)}\n`;
         xml += `      </failure>\n`;

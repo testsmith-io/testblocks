@@ -17,6 +17,7 @@ export interface ReportData {
     totalTests: number;
     passed: number;
     failed: number;
+    skipped: number;
     duration: number;
   };
   testFiles: { file: string; testFile: TestFile; results: TestResult[] }[];

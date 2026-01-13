@@ -26,8 +26,9 @@ export class HTMLReporter implements Reporter {
     this.allResults.push({ file, testFile, results });
 
     const passed = results.filter(r => r.status === 'passed').length;
-    const failed = results.filter(r => r.status !== 'passed').length;
-    console.log(`  ${passed} passed, ${failed} failed\n`);
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    const failed = results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length;
+    console.log(`  ${passed} passed, ${failed} failed, ${skipped} skipped\n`);
   }
 
   onComplete(allResults: { file: string; results: TestResult[] }[]): void {
@@ -43,8 +44,12 @@ export class HTMLReporter implements Reporter {
       (sum, r) => sum + r.results.filter(t => t.status === 'passed').length,
       0
     );
+    const skipped = allResults.reduce(
+      (sum, r) => sum + r.results.filter(t => t.status === 'skipped').length,
+      0
+    );
     const failed = allResults.reduce(
-      (sum, r) => sum + r.results.filter(t => t.status !== 'passed').length,
+      (sum, r) => sum + r.results.filter(t => t.status !== 'passed' && t.status !== 'skipped').length,
       0
     );
     const totalDuration = allResults.reduce(
@@ -54,7 +59,7 @@ export class HTMLReporter implements Reporter {
 
     const html = generateHTMLReport({
       timestamp: new Date().toISOString(),
-      summary: { totalTests, passed, failed, duration: totalDuration },
+      summary: { totalTests, passed, failed, skipped, duration: totalDuration },
       testFiles: this.allResults,
     });
 
@@ -73,19 +78,23 @@ export function generateHTMLReport(data: ReportData): string {
   let actualTests = 0;
   let actualPassed = 0;
   let actualFailed = 0;
+  let actualSkipped = 0;
 
   for (const { results } of testFiles) {
     for (const result of results) {
       if (!result.isLifecycle) {
         actualTests++;
         if (result.status === 'passed') actualPassed++;
+        else if (result.status === 'skipped') actualSkipped++;
         else actualFailed++;
       }
     }
   }
 
-  const passRate = actualTests > 0
-    ? ((actualPassed / actualTests) * 100).toFixed(1)
+  // Pass rate excludes skipped tests from calculation
+  const runTests = actualTests - actualSkipped;
+  const passRate = runTests > 0
+    ? ((actualPassed / runTests) * 100).toFixed(1)
     : '0';
 
   let html = `<!DOCTYPE html>
@@ -115,6 +124,10 @@ ${getHTMLStyles()}
       <div class="summary-card failed">
         <div class="value">${actualFailed}</div>
         <div class="label">Failed</div>
+      </div>
+      <div class="summary-card skipped">
+        <div class="value">${actualSkipped}</div>
+        <div class="label">Skipped</div>
       </div>
       <div class="summary-card">
         <div class="value">${passRate}%</div>
@@ -148,13 +161,14 @@ function renderTestFile(file: string, testFile: TestFile, results: TestResult[])
   const testResults = results.filter(r => !r.isLifecycle);
 
   const filePassed = testResults.filter(r => r.status === 'passed').length;
-  const fileFailed = testResults.filter(r => r.status !== 'passed').length;
+  const fileSkipped = testResults.filter(r => r.status === 'skipped').length;
+  const fileFailed = testResults.filter(r => r.status !== 'passed' && r.status !== 'skipped').length;
 
   let html = `
     <div class="test-file">
       <div class="test-file-header">
         <span>${escapeHtml(testFile.name)}</span>
-        <span class="test-file-path">${escapeHtml(file)} • ${filePassed} passed, ${fileFailed} failed</span>
+        <span class="test-file-path">${escapeHtml(file)} • ${filePassed} passed, ${fileFailed} failed, ${fileSkipped} skipped</span>
       </div>
 `;
 
@@ -361,6 +375,7 @@ function getHTMLStyles(): string {
     .summary-card .label { font-size: 14px; color: var(--color-text-secondary); }
     .summary-card.passed .value { color: var(--color-passed); }
     .summary-card.failed .value { color: var(--color-failed); }
+    .summary-card.skipped .value { color: var(--color-skipped); }
     .test-file {
       background: var(--color-surface);
       border: 1px solid var(--color-border);

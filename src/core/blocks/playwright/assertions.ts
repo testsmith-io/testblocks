@@ -1,6 +1,6 @@
 import { BlockDefinition } from '../../types';
 import { PlaywrightPage } from './types';
-import { resolveVariables, resolveSelector, getDisplaySelector, getExpect, executeWebAssertion } from './utils';
+import { resolveVariables, resolveSelector, getDisplaySelector, getExpect, executeWebAssertion, getTimeout } from './utils';
 
 /**
  * Assertion blocks for Playwright (visibility, text, values)
@@ -14,7 +14,6 @@ export const assertionBlocks: BlockDefinition[] = [
     tooltip: 'Assert that an element is visible (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -22,7 +21,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -51,7 +50,6 @@ export const assertionBlocks: BlockDefinition[] = [
     tooltip: 'Assert that an element is not visible (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -59,7 +57,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -89,7 +87,6 @@ export const assertionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'TEXT', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -98,7 +95,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
       const expectedText = resolveVariables(params.TEXT as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -128,7 +125,6 @@ export const assertionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'TEXT', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -137,7 +133,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
       const expectedText = resolveVariables(params.TEXT as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -166,14 +162,13 @@ export const assertionBlocks: BlockDefinition[] = [
     tooltip: 'Assert that current URL contains expected value (auto-waits)',
     inputs: [
       { name: 'TEXT', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const expectedText = resolveVariables(params.TEXT as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
 
@@ -205,14 +200,13 @@ export const assertionBlocks: BlockDefinition[] = [
     tooltip: 'Assert that page title contains expected value (auto-waits)',
     inputs: [
       { name: 'TEXT', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const expectedText = resolveVariables(params.TEXT as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
 
@@ -243,7 +237,6 @@ export const assertionBlocks: BlockDefinition[] = [
     tooltip: 'Assert that an element is enabled (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -251,7 +244,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -281,7 +274,6 @@ export const assertionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'EXPECTED', type: 'field', fieldType: 'checkbox', default: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -290,7 +282,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
       const expected = params.EXPECTED as boolean;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -326,7 +318,6 @@ export const assertionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'VALUE', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -335,7 +326,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
       const expectedValue = resolveVariables(params.VALUE as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);
@@ -367,7 +358,6 @@ export const assertionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'VALUE', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -376,7 +366,7 @@ export const assertionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const displaySelector = getDisplaySelector(params, context);
       const expectedValue = resolveVariables(params.VALUE as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const expect = await getExpect();
       const locator = page.locator(selector);

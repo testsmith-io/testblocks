@@ -59,6 +59,7 @@ import {
   setGlobalsDirectory,
   getTestIdAttribute,
   setTestIdAttribute,
+  getGlobalTimeout,
 } from './globals';
 import { codegenManager } from './codegenManager';
 
@@ -250,7 +251,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
 
       const executor = new TestExecutor({
         headless: req.query.headless !== 'false',
-        timeout: Number(req.query.timeout) || 30000,
+        timeout: Number(req.query.timeout) || getGlobalTimeout(),
         variables: globalVars,
         procedures: globalProcs,
         testIdAttribute: testIdAttr,
@@ -310,7 +311,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
 
       const executor = new TestExecutor({
         headless: req.query.headless !== 'false',
-        timeout: Number(req.query.timeout) || 30000,
+        timeout: Number(req.query.timeout) || getGlobalTimeout(),
         variables: globalVars,
         procedures: globalProcs,
         testIdAttribute: testIdAttr,
@@ -463,7 +464,8 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         summary: {
           totalTests: results.length,
           passed: results.filter(r => r.status === 'passed').length,
-          failed: results.filter(r => r.status !== 'passed').length,
+          failed: results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length,
+          skipped: results.filter(r => r.status === 'skipped').length,
           duration: results.reduce((sum, r) => sum + r.duration, 0),
         },
         testFiles: [{
@@ -502,7 +504,8 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         summary: {
           totalTests: results.length,
           passed: results.filter(r => r.status === 'passed').length,
-          failed: results.filter(r => r.status !== 'passed').length,
+          failed: results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length,
+          skipped: results.filter(r => r.status === 'skipped').length,
           duration: results.reduce((sum, r) => sum + r.duration, 0),
         },
         testFiles: [{
