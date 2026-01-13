@@ -1,6 +1,6 @@
 import { BlockDefinition } from '../../types';
 import { PlaywrightPage, PlaywrightLocator } from './types';
-import { resolveVariables, resolveSelector } from './utils';
+import { resolveVariables, resolveSelector, getTimeout } from './utils';
 
 /**
  * User interaction blocks for Playwright (click, type, fill, etc.)
@@ -14,14 +14,13 @@ export const interactionBlocks: BlockDefinition[] = [
     tooltip: 'Click on an element (auto-waits for element to be visible and stable)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Clicking: ${selector}`);
       const locator = page.locator(selector) as PlaywrightLocator;
@@ -51,7 +50,6 @@ export const interactionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'VALUE', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -60,7 +58,7 @@ export const interactionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const rawValue = params.VALUE as string;
       const value = resolveVariables(rawValue, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Filling ${selector} with "${value}"`);
       const locator = page.locator(selector);
@@ -84,7 +82,6 @@ export const interactionBlocks: BlockDefinition[] = [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'TEXT', type: 'field', fieldType: 'text', required: true },
       { name: 'DELAY', type: 'field', fieldType: 'number', default: 50 },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -93,7 +90,7 @@ export const interactionBlocks: BlockDefinition[] = [
       const selector = resolveSelector(params, context);
       const text = resolveVariables(params.TEXT as string, context);
       const delay = params.DELAY as number;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Typing "${text}" into ${selector}`);
       const locator = page.locator(selector);
@@ -117,7 +114,6 @@ export const interactionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'KEY', type: 'field', fieldType: 'dropdown', options: [['Enter', 'Enter'], ['Tab', 'Tab'], ['Escape', 'Escape'], ['Backspace', 'Backspace'], ['ArrowUp', 'ArrowUp'], ['ArrowDown', 'ArrowDown'], ['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight']] },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -125,7 +121,7 @@ export const interactionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const key = params.KEY as string;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Pressing ${key} on ${selector}`);
       const locator = page.locator(selector);
@@ -147,7 +143,6 @@ export const interactionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'VALUE', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -155,7 +150,7 @@ export const interactionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const value = resolveVariables(params.VALUE as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Selecting "${value}" in ${selector}`);
       const locator = page.locator(selector);
@@ -177,7 +172,6 @@ export const interactionBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'ACTION', type: 'field', fieldType: 'dropdown', options: [['Check', 'check'], ['Uncheck', 'uncheck']] },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -185,7 +179,7 @@ export const interactionBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const action = params.ACTION as string;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`${action === 'check' ? 'Checking' : 'Unchecking'} ${selector}`);
       const locator = page.locator(selector);
@@ -210,14 +204,13 @@ export const interactionBlocks: BlockDefinition[] = [
     tooltip: 'Hover over an element (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Hovering over ${selector}`);
       const locator = page.locator(selector);

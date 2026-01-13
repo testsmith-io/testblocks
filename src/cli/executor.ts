@@ -203,6 +203,7 @@ export class TestExecutor {
       logger: this.createLogger(),
       plugins: this.plugins,
       procedures: this.procedures,
+      webTimeout: this.options.timeout,
     };
   }
 

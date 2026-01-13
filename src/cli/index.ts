@@ -192,6 +192,7 @@ program
         globalsPath = findGlobalsFile(testDir) || globalsPath;
       }
 
+      let globalTimeout: number | undefined;
       if (fs.existsSync(globalsPath)) {
         try {
           const globalsContent = fs.readFileSync(globalsPath, 'utf-8');
@@ -201,6 +202,9 @@ program
           }
           if (globals.procedures && typeof globals.procedures === 'object') {
             globalProcedures = globals.procedures as Record<string, ProcedureDefinition>;
+          }
+          if (typeof globals.timeout === 'number') {
+            globalTimeout = globals.timeout;
           }
         } catch (e) {
           console.warn(`Warning: Could not load globals from ${globalsPath}: ${(e as Error).message}`);
@@ -262,10 +266,14 @@ program
         variables.baseUrl = options.baseUrl;
       }
 
+      // Determine timeout: CLI option takes precedence, then globals.json, then default
+      const cliTimeout = parseInt(options.timeout, 10);
+      const effectiveTimeout = options.timeout !== '30000' ? cliTimeout : (globalTimeout ?? cliTimeout);
+
       // Create executor options
       const executorOptions: ExecutorOptions = {
         headless: !options.headed,
-        timeout: parseInt(options.timeout, 10),
+        timeout: effectiveTimeout,
         baseUrl: options.baseUrl,
         variables,
         procedures: globalProcedures,
@@ -461,7 +469,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.9.1',
+            '@testsmith/testblocks': '^0.9.2',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));

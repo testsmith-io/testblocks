@@ -1,5 +1,14 @@
 import { ExecutionContext, SoftAssertionError } from '../../types';
 
+const DEFAULT_WEB_TIMEOUT = 30000;
+
+/**
+ * Get the global web timeout from context
+ */
+export function getTimeout(context: ExecutionContext): number {
+  return context.webTimeout ?? DEFAULT_WEB_TIMEOUT;
+}
+
 // Import Playwright's expect for assertions with auto-waiting
 // We use dynamic import with string concatenation to prevent Vite from
 // trying to bundle the playwright package (which is Node.js-only)

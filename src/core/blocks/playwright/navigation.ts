@@ -1,6 +1,6 @@
 import { BlockDefinition } from '../../types';
 import { PlaywrightPage } from './types';
-import { resolveVariables, resolveSelector } from './utils';
+import { resolveVariables, resolveSelector, getTimeout } from './utils';
 
 /**
  * Navigation and waiting blocks for Playwright
@@ -42,7 +42,6 @@ export const navigationBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'STATE', type: 'field', fieldType: 'dropdown', options: [['Visible', 'visible'], ['Hidden', 'hidden'], ['Attached', 'attached'], ['Detached', 'detached']] },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
@@ -50,7 +49,7 @@ export const navigationBlocks: BlockDefinition[] = [
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const state = params.STATE as string;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Waiting for ${selector} to be ${state}`);
       await page.waitForSelector(selector, { state, timeout });
@@ -70,14 +69,13 @@ export const navigationBlocks: BlockDefinition[] = [
     tooltip: 'Wait for URL to match',
     inputs: [
       { name: 'URL', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     previousStatement: true,
     nextStatement: true,
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const url = resolveVariables(params.URL as string, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       context.logger.info(`Waiting for URL to match: ${url}`);
       await page.waitForURL(url, { timeout });

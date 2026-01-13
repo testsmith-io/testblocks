@@ -108,6 +108,13 @@ export function getTestIdAttribute(): string {
 }
 
 /**
+ * Get the configured global timeout in milliseconds (defaults to 30000)
+ */
+export function getGlobalTimeout(): number {
+  return (loadedGlobals as GlobalsConfig).timeout || 30000;
+}
+
+/**
  * Set the test ID attribute and persist to globals.json
  */
 export function setTestIdAttribute(attribute: string): void {

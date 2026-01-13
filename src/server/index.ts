@@ -443,7 +443,8 @@ app.post('/api/reports/html', (req, res) => {
       summary: {
         totalTests: results.length,
         passed: results.filter(r => r.status === 'passed').length,
-        failed: results.filter(r => r.status !== 'passed').length,
+        failed: results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length,
+        skipped: results.filter(r => r.status === 'skipped').length,
         duration: results.reduce((sum, r) => sum + r.duration, 0),
       },
       testFiles: [{
@@ -483,7 +484,8 @@ app.post('/api/reports/junit', (req, res) => {
       summary: {
         totalTests: results.length,
         passed: results.filter(r => r.status === 'passed').length,
-        failed: results.filter(r => r.status !== 'passed').length,
+        failed: results.filter(r => r.status !== 'passed' && r.status !== 'skipped').length,
+        skipped: results.filter(r => r.status === 'skipped').length,
         duration: results.reduce((sum, r) => sum + r.duration, 0),
       },
       testFiles: [{

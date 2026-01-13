@@ -142,6 +142,8 @@ export interface ExecutionContext {
   softAssertions?: boolean;
   // Collected soft assertion errors
   softAssertionErrors?: SoftAssertionError[];
+  // Global timeout for web actions in milliseconds (default: 30000)
+  webTimeout?: number;
 }
 
 export interface Logger {

@@ -1,6 +1,6 @@
 import { BlockDefinition } from '../../types';
 import { PlaywrightPage } from './types';
-import { resolveSelector } from './utils';
+import { resolveSelector, getTimeout } from './utils';
 
 /**
  * Data retrieval blocks for Playwright (get text, attributes, values)
@@ -14,13 +14,12 @@ export const retrievalBlocks: BlockDefinition[] = [
     tooltip: 'Get text content of an element (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const locator = page.locator(selector);
       await locator.waitFor({ state: 'visible', timeout });
@@ -45,14 +44,13 @@ export const retrievalBlocks: BlockDefinition[] = [
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'ATTRIBUTE', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const attribute = params.ATTRIBUTE as string;
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const locator = page.locator(selector);
       await locator.waitFor({ state: 'attached', timeout });
@@ -76,13 +74,12 @@ export const retrievalBlocks: BlockDefinition[] = [
     tooltip: 'Get current value of an input field (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
-      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
-      const timeout = params.TIMEOUT as number;
+      const timeout = getTimeout(context);
 
       const locator = page.locator(selector);
       await locator.waitFor({ state: 'visible', timeout });

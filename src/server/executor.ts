@@ -197,6 +197,7 @@ export class TestExecutor {
       plugins: this.plugins,
       testIdAttribute: this.options.testIdAttribute,
       procedures: mergedProcedures,
+      webTimeout: this.options.timeout,
     };
 
     // Check if there are any enabled tests
@@ -470,6 +471,7 @@ export class TestExecutor {
       // Enable soft assertions if configured on the test
       softAssertions: test.softAssertions || false,
       softAssertionErrors: [],
+      webTimeout: this.options.timeout,
     };
 
     // Run beforeTest hooks
@@ -580,6 +582,7 @@ export class TestExecutor {
       // Enable soft assertions if configured on the test
       softAssertions: test.softAssertions || false,
       softAssertionErrors: [],
+      webTimeout: this.options.timeout,
     };
 
     // Inject data values into variables
