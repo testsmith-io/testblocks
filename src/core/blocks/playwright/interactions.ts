@@ -1,5 +1,5 @@
 import { BlockDefinition } from '../../types';
-import { PlaywrightPage } from './types';
+import { PlaywrightPage, PlaywrightLocator } from './types';
 import { resolveVariables, resolveSelector } from './utils';
 
 /**
@@ -11,7 +11,7 @@ export const interactionBlocks: BlockDefinition[] = [
     type: 'web_click',
     category: 'Web',
     color: '#E91E63',
-    tooltip: 'Click on an element (auto-waits for element)',
+    tooltip: 'Click on an element (auto-waits for element to be visible and stable)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
@@ -24,8 +24,17 @@ export const interactionBlocks: BlockDefinition[] = [
       const timeout = params.TIMEOUT as number;
 
       context.logger.info(`Clicking: ${selector}`);
-      const locator = page.locator(selector);
+      const locator = page.locator(selector) as PlaywrightLocator;
+
+      // Wait for element to be visible and stable before clicking
+      await locator.waitFor({ state: 'visible', timeout });
+
+      // Scroll into view to ensure element is in viewport
+      await locator.scrollIntoViewIfNeeded({ timeout });
+
+      // Click with retry on intercept (handles overlays/animations)
       await locator.click({ timeout });
+
       return {
         _summary: params.SELECTOR as string,
         selector,

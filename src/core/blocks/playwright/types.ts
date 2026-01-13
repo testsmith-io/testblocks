@@ -3,7 +3,7 @@
  */
 
 export interface PlaywrightLocator {
-  click(options?: { timeout?: number }): Promise<void>;
+  click(options?: { timeout?: number; force?: boolean }): Promise<void>;
   fill(value: string, options?: { timeout?: number }): Promise<void>;
   type(text: string, options?: { delay?: number; timeout?: number }): Promise<void>;
   pressSequentially(text: string, options?: { delay?: number; timeout?: number }): Promise<void>;
@@ -21,6 +21,7 @@ export interface PlaywrightLocator {
   isChecked(): Promise<boolean>;
   count(): Promise<number>;
   waitFor(options?: { state?: 'attached' | 'detached' | 'visible' | 'hidden'; timeout?: number }): Promise<void>;
+  scrollIntoViewIfNeeded(options?: { timeout?: number }): Promise<void>;
 }
 
 export interface PlaywrightPage {

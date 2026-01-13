@@ -121,6 +121,34 @@ export class TestExecutor {
     // Create base context for hooks
     const baseContext = this.createBaseContext(testFile.variables);
 
+    // Check if there are any enabled tests
+    const enabledTests = testFile.tests.filter(t => !t.disabled);
+    const hasEnabledTests = enabledTests.length > 0;
+
+    // Add skipped results for disabled tests first
+    for (const test of testFile.tests) {
+      if (test.disabled) {
+        console.log(`  Skipping (disabled): ${test.name}`);
+        results.push({
+          testId: test.id,
+          testName: test.name,
+          status: 'skipped',
+          duration: 0,
+          steps: [],
+          error: { message: 'Test is disabled' },
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Only run hooks and tests if there are enabled tests
+    if (!hasEnabledTests) {
+      console.log('  All tests disabled, skipping hooks');
+      await this.cleanup();
+      return results;
+    }
+
     try {
       // Run beforeAll hooks
       if (testFile.beforeAll) {
@@ -128,24 +156,8 @@ export class TestExecutor {
         await this.runSteps(steps, baseContext, 'beforeAll');
       }
 
-      // Run each test - pass baseContext variables so beforeAll state persists
-      for (const test of testFile.tests) {
-        // Skip disabled tests
-        if (test.disabled) {
-          console.log(`  Skipping (disabled): ${test.name}`);
-          results.push({
-            testId: test.id,
-            testName: test.name,
-            status: 'skipped',
-            duration: 0,
-            steps: [],
-            error: { message: 'Test is disabled' },
-            startedAt: new Date().toISOString(),
-            finishedAt: new Date().toISOString(),
-          });
-          continue;
-        }
-
+      // Run each enabled test - pass baseContext variables so beforeAll state persists
+      for (const test of enabledTests) {
         // Check if test has data-driven sets
         if (test.data && test.data.length > 0) {
           // Run test for each data set
@@ -662,7 +674,7 @@ export class TestExecutor {
     let screenshot: string | undefined;
     if (status === 'failed' && this.page) {
       try {
-        const buffer = await this.page.screenshot({ type: 'png' });
+        const buffer = await this.page.screenshot({ type: 'png', fullPage: true });
         screenshot = `data:image/png;base64,${buffer.toString('base64')}`;
       } catch (screenshotError) {
         // Silently ignore screenshot errors

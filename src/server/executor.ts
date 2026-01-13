@@ -199,6 +199,33 @@ export class TestExecutor {
       procedures: mergedProcedures,
     };
 
+    // Check if there are any enabled tests
+    const enabledTests = testFile.tests.filter(t => !t.disabled);
+    const hasEnabledTests = enabledTests.length > 0;
+
+    // Add skipped results for disabled tests first
+    for (const test of testFile.tests) {
+      if (test.disabled) {
+        results.push({
+          testId: test.id,
+          testName: test.name,
+          status: 'skipped',
+          duration: 0,
+          steps: [],
+          error: { message: 'Test is disabled' },
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Only run hooks and tests if there are enabled tests
+    if (!hasEnabledTests) {
+      sharedContext.logger.info('All tests disabled, skipping hooks');
+      await this.cleanup();
+      return results;
+    }
+
     let beforeAllFailed = false;
 
     try {
@@ -220,22 +247,8 @@ export class TestExecutor {
 
       // Only run tests if beforeAll succeeded
       if (!beforeAllFailed) {
-        // Run each test with beforeEach/afterEach
-        for (const test of testFile.tests) {
-          // Skip disabled tests
-          if (test.disabled) {
-            results.push({
-              testId: test.id,
-              testName: test.name,
-              status: 'skipped',
-              duration: 0,
-              steps: [],
-              error: { message: 'Test is disabled' },
-              startedAt: new Date().toISOString(),
-              finishedAt: new Date().toISOString(),
-            });
-            continue;
-          }
+        // Run each enabled test with beforeEach/afterEach
+        for (const test of enabledTests) {
 
           // Load data from file if specified
           let testData = test.data;
@@ -818,7 +831,7 @@ export class TestExecutor {
     if (status === 'failed' && isWebStep && context.page) {
       try {
         const page = context.page as { screenshot: (options?: { fullPage?: boolean }) => Promise<Buffer> };
-        const screenshotBuffer = await page.screenshot({ fullPage: false });
+        const screenshotBuffer = await page.screenshot({ fullPage: true });
         screenshot = `data:image/png;base64,${screenshotBuffer.toString('base64')}`;
       } catch (screenshotErr) {
         console.warn('Failed to capture screenshot:', (screenshotErr as Error).message);
