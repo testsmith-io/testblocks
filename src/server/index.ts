@@ -260,6 +260,20 @@ app.post('/api/run/:testId', async (req, res) => {
       return res.status(404).json({ error: `Test not found: ${testId}` });
     }
 
+    // Return skipped result for disabled tests
+    if (test.disabled) {
+      return res.json({
+        testId: test.id,
+        testName: test.name,
+        status: 'skipped',
+        duration: 0,
+        steps: [],
+        error: { message: 'Test is disabled' },
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+      });
+    }
+
     // For single test runs, merge folder beforeEach/afterEach hooks
     // (beforeAll/afterAll are handled at suite level)
     const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);

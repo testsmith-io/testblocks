@@ -287,6 +287,20 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         return res.status(404).json({ error: `Test not found: ${testId}` });
       }
 
+      // Return skipped result for disabled tests
+      if (test.disabled) {
+        return res.json({
+          testId: test.id,
+          testName: test.name,
+          status: 'skipped',
+          duration: 0,
+          steps: [],
+          error: { message: 'Test is disabled' },
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+        });
+      }
+
       // Merge folder hooks for beforeEach/afterEach
       const mergedTestFile = mergeFolderHooksIntoTestFile(testFile, folderHooks || []);
 
