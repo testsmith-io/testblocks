@@ -11,16 +11,20 @@ export const retrievalBlocks: BlockDefinition[] = [
     type: 'web_get_text',
     category: 'Web',
     color: '#2196F3',
-    tooltip: 'Get text content of an element',
+    tooltip: 'Get text content of an element (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
+      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
+      const timeout = params.TIMEOUT as number;
 
-      const text = await page.textContent(selector);
+      const locator = page.locator(selector);
+      await locator.waitFor({ state: 'visible', timeout });
+      const text = await locator.textContent({ timeout });
       context.logger.debug(`Text content of ${selector}: "${text}"`);
       const displayText = text && text.length > 40 ? text.substring(0, 40) + '...' : text;
       return {
@@ -37,18 +41,22 @@ export const retrievalBlocks: BlockDefinition[] = [
     type: 'web_get_attribute',
     category: 'Web',
     color: '#2196F3',
-    tooltip: 'Get attribute value of an element',
+    tooltip: 'Get attribute value of an element (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
       { name: 'ATTRIBUTE', type: 'field', fieldType: 'text', required: true },
+      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
       const attribute = params.ATTRIBUTE as string;
+      const timeout = params.TIMEOUT as number;
 
-      const value = await page.getAttribute(selector, attribute);
+      const locator = page.locator(selector);
+      await locator.waitFor({ state: 'attached', timeout });
+      const value = await locator.getAttribute(attribute, { timeout });
       context.logger.debug(`Attribute ${attribute} of ${selector}: "${value}"`);
       return {
         _summary: `${attribute} = "${value}"`,
@@ -65,16 +73,20 @@ export const retrievalBlocks: BlockDefinition[] = [
     type: 'web_get_input_value',
     category: 'Web',
     color: '#2196F3',
-    tooltip: 'Get current value of an input field',
+    tooltip: 'Get current value of an input field (auto-waits)',
     inputs: [
       { name: 'SELECTOR', type: 'field', fieldType: 'text', required: true },
+      { name: 'TIMEOUT', type: 'field', fieldType: 'number', default: 30000 },
     ],
     output: { type: 'String' },
     execute: async (params, context) => {
       const page = context.page as PlaywrightPage;
       const selector = resolveSelector(params, context);
+      const timeout = params.TIMEOUT as number;
 
-      const value = await page.inputValue(selector);
+      const locator = page.locator(selector);
+      await locator.waitFor({ state: 'visible', timeout });
+      const value = await locator.inputValue({ timeout });
       context.logger.debug(`Input value of ${selector}: "${value}"`);
       const displayValue = value.length > 40 ? value.substring(0, 40) + '...' : value;
       return {
