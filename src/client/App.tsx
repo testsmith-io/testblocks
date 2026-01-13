@@ -2926,20 +2926,18 @@ export default function App() {
             </button>
             {!state.resultsPanelCollapsed && (
               <>
-                <h2>
-                  Results
-                  {state.results.length > 0 && (
-                    <span className="results-summary">
-                      <span className="passed-count">{state.results.filter(r => r.status === 'passed').length} passed</span>
-                      {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
-                        <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
-                      )}
-                      {state.results.filter(r => r.status === 'skipped').length > 0 && (
-                        <span className="skipped-count">{state.results.filter(r => r.status === 'skipped').length} skipped</span>
-                      )}
-                    </span>
-                  )}
-                </h2>
+                <h2>Results</h2>
+                {state.results.length > 0 && (
+                  <div className="results-summary">
+                    <span className="passed-count">{state.results.filter(r => r.status === 'passed').length} passed</span>
+                    {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
+                      <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
+                    )}
+                    {state.results.filter(r => r.status === 'skipped').length > 0 && (
+                      <span className="skipped-count">{state.results.filter(r => r.status === 'skipped').length} skipped</span>
+                    )}
+                  </div>
+                )}
                 {state.results.length > 0 && (
                   <div className="results-actions">
                     <button

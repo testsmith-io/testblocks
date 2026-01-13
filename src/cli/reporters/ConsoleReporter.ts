@@ -9,13 +9,24 @@ export class ConsoleReporter implements Reporter {
     console.log('');
 
     for (const result of results) {
-      const icon = result.status === 'passed' ? '✓' : '✗';
-      const color = result.status === 'passed' ? '\x1b[32m' : '\x1b[31m';
+      let icon: string;
+      let color: string;
+
+      if (result.status === 'passed') {
+        icon = '✓';
+        color = '\x1b[32m'; // green
+      } else if (result.status === 'skipped') {
+        icon = '○';
+        color = '\x1b[33m'; // yellow/orange
+      } else {
+        icon = '✗';
+        color = '\x1b[31m'; // red
+      }
       const reset = '\x1b[0m';
 
       console.log(`${color}  ${icon} ${result.testName}${reset} (${result.duration}ms)`);
 
-      if (result.error) {
+      if (result.error && result.status !== 'skipped') {
         console.log(`    ${result.error.message}`);
       }
     }
@@ -29,8 +40,12 @@ export class ConsoleReporter implements Reporter {
       (sum, r) => sum + r.results.filter(t => t.status === 'passed').length,
       0
     );
+    const skipped = allResults.reduce(
+      (sum, r) => sum + r.results.filter(t => t.status === 'skipped').length,
+      0
+    );
     const failed = allResults.reduce(
-      (sum, r) => sum + r.results.filter(t => t.status !== 'passed').length,
+      (sum, r) => sum + r.results.filter(t => t.status === 'failed' || t.status === 'error').length,
       0
     );
     const totalDuration = allResults.reduce(
@@ -39,7 +54,15 @@ export class ConsoleReporter implements Reporter {
     );
 
     console.log('─'.repeat(50));
-    console.log(`Tests:       ${passed} passed, ${failed} failed, ${totalTests} total`);
+    let summary = `Tests:       ${passed} passed`;
+    if (failed > 0) {
+      summary += `, ${failed} failed`;
+    }
+    if (skipped > 0) {
+      summary += `, ${skipped} skipped`;
+    }
+    summary += `, ${totalTests} total`;
+    console.log(summary);
     console.log(`Duration:    ${(totalDuration / 1000).toFixed(2)}s`);
     console.log(`Test Files:  ${allResults.length}`);
     console.log('─'.repeat(50));
