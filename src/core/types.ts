@@ -54,6 +54,8 @@ export interface TestCase {
   id: string;
   name: string;
   description?: string;
+  // Disabled tests are skipped in all runs
+  disabled?: boolean;
   // Data-driven testing: run test for each item in data array
   data?: TestDataSet[];
   // Data-driven testing: path to CSV file (relative to test file or absolute)

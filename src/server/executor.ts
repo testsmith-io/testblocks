@@ -222,6 +222,21 @@ export class TestExecutor {
       if (!beforeAllFailed) {
         // Run each test with beforeEach/afterEach
         for (const test of testFile.tests) {
+          // Skip disabled tests
+          if (test.disabled) {
+            results.push({
+              testId: test.id,
+              testName: test.name,
+              status: 'skipped',
+              duration: 0,
+              steps: [],
+              error: { message: 'Test is disabled' },
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+            });
+            continue;
+          }
+
           // Load data from file if specified
           let testData = test.data;
           if (test.dataFile && !testData) {

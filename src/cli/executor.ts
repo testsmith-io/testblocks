@@ -130,6 +130,22 @@ export class TestExecutor {
 
       // Run each test - pass baseContext variables so beforeAll state persists
       for (const test of testFile.tests) {
+        // Skip disabled tests
+        if (test.disabled) {
+          console.log(`  Skipping (disabled): ${test.name}`);
+          results.push({
+            testId: test.id,
+            testName: test.name,
+            status: 'skipped',
+            duration: 0,
+            steps: [],
+            error: { message: 'Test is disabled' },
+            startedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+          });
+          continue;
+        }
+
         // Check if test has data-driven sets
         if (test.data && test.data.length > 0) {
           // Run test for each data set

@@ -1693,6 +1693,24 @@ export default function App() {
     });
   }, [state.testFile.tests.length]);
 
+  // Toggle test disabled state
+  const handleToggleTestDisabled = useCallback((index: number) => {
+    setState(prev => {
+      const newTests = [...prev.testFile.tests];
+      newTests[index] = {
+        ...newTests[index],
+        disabled: !newTests[index].disabled,
+      };
+      return {
+        ...prev,
+        testFile: {
+          ...prev.testFile,
+          tests: newTests,
+        },
+      };
+    });
+  }, []);
+
   // Run all tests
   const handleRunAll = useCallback(async () => {
     setState(prev => ({ ...prev, isRunning: true, runningTestId: null, results: [] }));
@@ -2698,20 +2716,23 @@ export default function App() {
                   {state.testFile.tests.map((test, index) => {
                     const result = getTestResult(test.id);
                     const isRunningThis = state.runningTestId === test.id;
+                    const isDisabled = test.disabled === true;
                     return (
                       <div
                         key={test.id}
-                        className={`test-item ${index === state.selectedTestIndex ? 'active' : ''} ${result?.status || ''}`}
+                        className={`test-item ${index === state.selectedTestIndex ? 'active' : ''} ${result?.status || ''} ${isDisabled ? 'disabled' : ''}`}
                         onClick={() => setState(prev => ({ ...prev, selectedTestIndex: index, editorTab: 'test' }))}
                       >
                         <div className="test-item-content">
                           <div className="test-item-name">
-                            {result ? (
+                            {isDisabled ? (
+                              <span className="status-dot skipped" title="Test is disabled" />
+                            ) : result ? (
                               <span className={`status-dot ${result.status}`} />
                             ) : state.selectedFilePath && state.failedTestsMap.get(state.selectedFilePath)?.has(test.id) ? (
                               <span className="status-dot failed" title="Failed in previous run" />
                             ) : null}
-                            {test.name}
+                            <span className={isDisabled ? 'test-name-disabled' : ''}>{test.name}</span>
                             {test.data && test.data.length > 0 && (
                               <span className="data-driven-badge" title={`Data-driven: ${test.data.length} iterations`}>
                                 ×{test.data.length}
@@ -2725,8 +2746,8 @@ export default function App() {
                         <button
                           className="btn-run-test"
                           onClick={(e) => handleRunTest(test.id, e)}
-                          disabled={state.isRunning}
-                          title="Run this test"
+                          disabled={state.isRunning || isDisabled}
+                          title={isDisabled ? "Test is disabled" : "Run this test"}
                         >
                           {isRunningThis ? '...' : '▶'}
                         </button>
@@ -2831,10 +2852,19 @@ export default function App() {
                 <button
                   className="btn btn-success"
                   onClick={() => handleRunTest(selectedTest?.id)}
-                  disabled={state.isRunning}
+                  disabled={state.isRunning || selectedTest?.disabled}
                   style={{ padding: '6px 12px', fontSize: '12px', marginRight: '8px' }}
+                  title={selectedTest?.disabled ? 'Test is disabled' : 'Run this test'}
                 >
                   {state.runningTestId === selectedTest?.id ? 'Running...' : 'Run Test'}
+                </button>
+                <button
+                  className={`btn ${selectedTest?.disabled ? 'btn-success' : 'btn-warning'}`}
+                  onClick={() => handleToggleTestDisabled(state.selectedTestIndex)}
+                  style={{ padding: '6px 12px', fontSize: '12px', marginRight: '8px' }}
+                  title={selectedTest?.disabled ? 'Enable this test' : 'Disable this test'}
+                >
+                  {selectedTest?.disabled ? 'Enable' : 'Disable'}
                 </button>
                 <button
                   className="btn btn-danger"
