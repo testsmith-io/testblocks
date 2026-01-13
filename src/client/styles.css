@@ -358,6 +358,10 @@ body {
   color: var(--danger);
 }
 
+.results-summary .skipped-count {
+  color: #f59e0b;
+}
+
 .results-actions {
   display: flex;
   gap: 8px;
@@ -896,7 +900,15 @@ body {
 }
 
 .status-dot.skipped {
-  background: #9e9e9e;
+  background: #f59e0b;
+}
+
+.test-item.skipped {
+  background: rgba(245, 158, 11, 0.05);
+}
+
+.test-item.skipped.active {
+  background: rgba(245, 158, 11, 0.12);
 }
 
 /* Headless toggle */
