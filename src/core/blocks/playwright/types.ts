@@ -22,6 +22,8 @@ export interface PlaywrightLocator {
   count(): Promise<number>;
   waitFor(options?: { state?: 'attached' | 'detached' | 'visible' | 'hidden'; timeout?: number }): Promise<void>;
   scrollIntoViewIfNeeded(options?: { timeout?: number }): Promise<void>;
+  setInputFiles(files: string | string[] | { name: string; mimeType: string; buffer: Buffer } | { name: string; mimeType: string; buffer: Buffer }[], options?: { timeout?: number }): Promise<void>;
+  dragTo(target: PlaywrightLocator, options?: { timeout?: number }): Promise<void>;
 }
 
 export interface PlaywrightPage {

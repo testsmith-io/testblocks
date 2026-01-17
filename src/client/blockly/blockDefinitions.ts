@@ -1,6 +1,6 @@
 import * as Blockly from 'blockly';
 import { FieldMultilineInput } from '@blockly/field-multilineinput';
-import { BlockDefinition } from '../../core';
+import { BlockDefinition, blockClassRegistry } from '../../core';
 
 // Import and register custom fields
 import './FieldTextInputWithAutocomplete';
@@ -9,73 +9,98 @@ import './FieldMultilineWithAutocomplete';
 // Register the multiline input field
 Blockly.fieldRegistry.register('field_multilineinput', FieldMultilineInput);
 
-// Convert our block definitions to Blockly format
+/**
+ * Convert our block definitions to Blockly format and register them.
+ *
+ * This function supports both:
+ * - Class-based blocks: Uses Block.toBlocklyJson() and Block.getBlocklyInitExtension()
+ * - Legacy BlockDefinition arrays: Uses the standard conversion logic
+ */
 export function registerBlocklyBlocks(blocks: BlockDefinition[]): void {
   blocks.forEach(block => {
-    // Create the block JSON definition
-    const blockJson: Record<string, unknown> = {
-      type: block.type,
-      colour: block.color,
-      tooltip: block.tooltip || '',
-      helpUrl: block.helpUrl || '',
-    };
+    // Check if there's a Block class for this type
+    const blockClass = blockClassRegistry.get(block.type);
 
-    // Build message and args
-    let message = '';
-    const args: unknown[] = [];
-    let argIndex = 0;
+    let blockJson: Record<string, unknown>;
+    let initExtension: (() => void) | undefined;
 
-    // Add block label based on type
-    message += formatBlockLabel(block.type);
-
-    block.inputs.forEach((input) => {
-      if (input.type === 'field') {
-        // Add label for DATA field in data-driven test block
-        if (block.type === 'test_case_data_driven' && input.name === 'DATA') {
-          message += ` Data: %${++argIndex}`;
-        } else {
-          message += ` %${++argIndex}`;
-        }
-        args.push(createFieldArg(input, argIndex));
-      } else if (input.type === 'value') {
-        message += ` %${++argIndex}`;
-        args.push({
-          type: 'input_value',
-          name: input.name,
-          check: input.check,
-        });
-      } else if (input.type === 'statement') {
-        // Statements go on separate lines
-        message += ` %${++argIndex}`;
-        args.push({
-          type: 'input_statement',
-          name: input.name,
-        });
-      }
-    });
-
-    blockJson.message0 = message;
-    blockJson.args0 = args;
-
-    if (block.output) {
-      blockJson.output = block.output.type;
+    if (blockClass) {
+      // Use the block class's custom Blockly JSON generation
+      blockJson = blockClass.toBlocklyJson();
+      initExtension = blockClass.getBlocklyInitExtension();
+    } else {
+      // Legacy handling - build blockJson from BlockDefinition
+      blockJson = buildBlockJsonFromDefinition(block);
     }
 
-    if (block.previousStatement !== undefined) {
-      blockJson.previousStatement = block.previousStatement ? null : undefined;
-    }
-
-    if (block.nextStatement !== undefined) {
-      blockJson.nextStatement = block.nextStatement ? null : undefined;
-    }
-
-    // Register the block
+    // Register the block with Blockly
     Blockly.Blocks[block.type] = {
       init: function() {
         this.jsonInit(blockJson);
+        // Run custom init extension if available
+        if (initExtension) {
+          initExtension.call(this);
+        }
       },
     };
   });
+}
+
+/**
+ * Build Blockly JSON from a legacy BlockDefinition.
+ */
+function buildBlockJsonFromDefinition(block: BlockDefinition): Record<string, unknown> {
+  const blockJson: Record<string, unknown> = {
+    type: block.type,
+    colour: block.color,
+    tooltip: block.tooltip || '',
+    helpUrl: block.helpUrl || '',
+  };
+
+  // Standard block handling
+  let message = '';
+  const args: unknown[] = [];
+  let argIndex = 0;
+
+  // Add block label based on type
+  message += formatBlockLabel(block.type);
+
+  block.inputs.forEach((input) => {
+    if (input.type === 'field') {
+      message += ` %${++argIndex}`;
+      args.push(createFieldArg(input, argIndex));
+    } else if (input.type === 'value') {
+      message += ` %${++argIndex}`;
+      args.push({
+        type: 'input_value',
+        name: input.name,
+        check: input.check,
+      });
+    } else if (input.type === 'statement') {
+      message += ` %${++argIndex}`;
+      args.push({
+        type: 'input_statement',
+        name: input.name,
+      });
+    }
+  });
+
+  blockJson.message0 = message;
+  blockJson.args0 = args;
+
+  if (block.output) {
+    blockJson.output = block.output.type;
+  }
+
+  if (block.previousStatement !== undefined) {
+    blockJson.previousStatement = block.previousStatement ? null : undefined;
+  }
+
+  if (block.nextStatement !== undefined) {
+    blockJson.nextStatement = block.nextStatement ? null : undefined;
+  }
+
+  return blockJson;
 }
 
 function formatBlockLabel(type: string): string {

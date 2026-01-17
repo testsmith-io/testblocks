@@ -2928,17 +2928,6 @@ export default function App() {
               <>
                 <h2>Results</h2>
                 {state.results.length > 0 && (
-                  <div className="results-summary">
-                    <span className="passed-count">{state.results.filter(r => r.status === 'passed').length} passed</span>
-                    {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
-                      <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
-                    )}
-                    {state.results.filter(r => r.status === 'skipped').length > 0 && (
-                      <span className="skipped-count">{state.results.filter(r => r.status === 'skipped').length} skipped</span>
-                    )}
-                  </div>
-                )}
-                {state.results.length > 0 && (
                   <div className="results-actions">
                     <button
                       className="btn-report"
@@ -2959,6 +2948,17 @@ export default function App() {
               </>
             )}
           </div>
+          {!state.resultsPanelCollapsed && state.results.length > 0 && (
+            <div className="results-summary">
+              <span className="passed-count">{state.results.filter(r => r.status === 'passed').length} passed</span>
+              {state.results.filter(r => r.status === 'failed' || r.status === 'error').length > 0 && (
+                <span className="failed-count">{state.results.filter(r => r.status === 'failed' || r.status === 'error').length} failed</span>
+              )}
+              {state.results.filter(r => r.status === 'skipped').length > 0 && (
+                <span className="skipped-count">{state.results.filter(r => r.status === 'skipped').length} skipped</span>
+              )}
+            </div>
+          )}
           {!state.resultsPanelCollapsed && (
           <div className="results-content">
             {state.results.length === 0 ? (
