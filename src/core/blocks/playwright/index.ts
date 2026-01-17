@@ -9,22 +9,47 @@
  */
 
 import { BlockDefinition } from '../../types';
-import { navigationBlocks } from './navigation';
-import { interactionBlocks } from './interactions';
-import { retrievalBlocks } from './retrieval';
-import { assertionBlocks } from './assertions';
+import { Block } from '../base';
+import { navigationBlocks, navigationBlockClasses } from './navigation';
+import { interactionBlocks, interactionBlockClasses } from './interactions';
+import { retrievalBlocks, retrievalBlockClasses } from './retrieval';
+import { assertionBlocks, assertionBlockClasses } from './assertions';
 
 // Re-export types and utilities for external use
 export * from './types';
 export * from './utils';
 
-// Re-export individual block categories
+// Re-export individual block categories (BlockDefinition arrays)
 export { navigationBlocks } from './navigation';
 export { interactionBlocks } from './interactions';
 export { retrievalBlocks } from './retrieval';
 export { assertionBlocks } from './assertions';
 
-// Combined export of all Playwright blocks
+// Re-export block class arrays
+export { navigationBlockClasses } from './navigation';
+export { interactionBlockClasses } from './interactions';
+export { retrievalBlockClasses } from './retrieval';
+export { assertionBlockClasses } from './assertions';
+
+// Re-export individual block classes
+export * from './navigation';
+export * from './interactions';
+export * from './retrieval';
+export * from './assertions';
+
+/**
+ * All Playwright block class instances.
+ */
+export const playwrightBlockClasses: Block[] = [
+  ...navigationBlockClasses,
+  ...interactionBlockClasses,
+  ...retrievalBlockClasses,
+  ...assertionBlockClasses,
+];
+
+/**
+ * Combined export of all Playwright blocks (BlockDefinition array for backward compatibility).
+ */
 export const playwrightBlocks: BlockDefinition[] = [
   ...navigationBlocks,
   ...interactionBlocks,

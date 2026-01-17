@@ -347,10 +347,9 @@ body {
   gap: 12px;
   font-size: 13px;
   font-weight: 500;
-  padding: 8px 12px;
+  padding: 10px 16px;
   background: var(--bg-tertiary);
-  border-radius: 6px;
-  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .results-summary .passed-count {

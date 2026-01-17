@@ -666,15 +666,9 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
               .filter((b): b is Blockly.Block => b !== null && b.type !== 'test_case' && b.type !== 'data_driven_test');
           }
 
-          // If no multi-selection, copy the right-clicked block and its connected chain
-          if (blocksToCopy.length === 0) {
-            let current: Blockly.Block | null = scope.block;
-            while (current) {
-              if (current.type !== 'test_case' && current.type !== 'data_driven_test') {
-                blocksToCopy.push(current);
-              }
-              current = current.getNextBlock();
-            }
+          // If no multi-selection, copy only the right-clicked block (not the chain)
+          if (blocksToCopy.length === 0 && scope.block.type !== 'test_case' && scope.block.type !== 'data_driven_test') {
+            blocksToCopy.push(scope.block);
           }
 
           if (blocksToCopy.length === 0) {
@@ -689,9 +683,14 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
             return posA.y - posB.y;
           });
 
-          // Serialize each block
+          // Serialize each block individually (without their next connections)
           const serializedBlocks = blocksToCopy.map(block => {
-            return Blockly.serialization.blocks.save(block);
+            const state = Blockly.serialization.blocks.save(block);
+            // Remove the 'next' connection to prevent copying the chain
+            if (state && typeof state === 'object' && 'next' in state) {
+              delete (state as Record<string, unknown>).next;
+            }
+            return state;
           });
 
           // Store in localStorage for cross-workspace paste
@@ -928,15 +927,9 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
               .filter((b): b is Blockly.Block => b !== null && b.type !== 'test_case' && b.type !== 'data_driven_test');
           }
 
-          // If no multi-selection, copy the selected block and its chain
+          // If no multi-selection, copy only the selected block (not the chain)
           if (blocksToCopy.length === 0 && selectedBlock) {
-            let current: Blockly.Block | null = selectedBlock;
-            while (current) {
-              if (current.type !== 'test_case' && current.type !== 'data_driven_test') {
-                blocksToCopy.push(current);
-              }
-              current = current.getNextBlock();
-            }
+            blocksToCopy.push(selectedBlock);
           }
 
           if (blocksToCopy.length > 0) {
@@ -946,7 +939,15 @@ export function BlocklyWorkspace({ onWorkspaceChange, onCustomBlockCreated, onRe
               return posA.y - posB.y;
             });
 
-            const serializedBlocks = blocksToCopy.map(block => Blockly.serialization.blocks.save(block));
+            // Serialize each block individually (without their next connections)
+            const serializedBlocks = blocksToCopy.map(block => {
+              const state = Blockly.serialization.blocks.save(block);
+              // Remove the 'next' connection to prevent copying the chain
+              if (state && typeof state === 'object' && 'next' in state) {
+                delete (state as Record<string, unknown>).next;
+              }
+              return state;
+            });
             localStorage.setItem('testblocks-clipboard', JSON.stringify(serializedBlocks));
             toast.success(`Copied ${blocksToCopy.length} block(s)`);
             e.preventDefault();
