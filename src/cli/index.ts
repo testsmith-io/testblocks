@@ -469,7 +469,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.9.5',
+            '@testsmith/testblocks': '^0.9.6',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
@@ -729,16 +729,19 @@ program
   .option('-p, --port <port>', 'Port to run on', '3000')
   .option('--plugins-dir <dir>', 'Plugins directory', './plugins')
   .option('--globals-dir <dir>', 'Globals directory (where globals.json is located)', '.')
+  .option('--project-dir <dir>', 'Project directory to auto-open in the UI')
   .option('-o, --open', 'Open browser automatically', false)
   .action(async (options) => {
     const port = parseInt(options.port, 10);
     const pluginsDir = path.resolve(options.pluginsDir);
     const globalsDir = path.resolve(options.globalsDir);
+    const projectDir = options.projectDir ? path.resolve(options.projectDir) : undefined;
 
     await startServer({
       port,
       pluginsDir,
       globalsDir,
+      projectDir,
       open: options.open,
     });
   });

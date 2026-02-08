@@ -12,6 +12,171 @@ export interface GlobalsFile {
 }
 
 /**
+ * Check if server has a project directory configured
+ */
+export async function getServerProjectDir(): Promise<string | null> {
+  try {
+    const response = await fetch('/api/initial-project');
+    const data = await response.json();
+    return data.projectDir || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load project file tree from server (when --project-dir is specified)
+ */
+export async function loadProjectFromServer(): Promise<FileNode | null> {
+  try {
+    const response = await fetch('/api/project/files');
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+
+    // Convert server response to FileNode structure
+    const convertToFileNode = (item: { name: string; path: string; type: 'file' | 'folder'; children?: unknown[] }, parentPath: string = ''): FileNode => {
+      const node: FileNode = {
+        name: item.name,
+        path: item.path,
+        type: item.type,
+        serverManaged: true, // Mark as server-managed
+      };
+
+      if (item.type === 'folder' && item.children) {
+        node.children = (item.children as { name: string; path: string; type: 'file' | 'folder'; children?: unknown[] }[])
+          .map(child => convertToFileNode(child, item.path));
+      }
+
+      return node;
+    };
+
+    const root: FileNode = {
+      name: data.name,
+      path: data.name,
+      type: 'folder',
+      serverManaged: true,
+      children: (data.files as { name: string; path: string; type: 'file' | 'folder'; children?: unknown[] }[])
+        .map(item => convertToFileNode(item, '')),
+    };
+
+    // Now load the actual test file contents
+    await loadTestFilesFromServer(root);
+
+    return root;
+  } catch (error) {
+    console.error('Failed to load project from server:', error);
+    return null;
+  }
+}
+
+/**
+ * Recursively load test file contents from server
+ */
+async function loadTestFilesFromServer(node: FileNode): Promise<void> {
+  if (node.type === 'file' && node.path.endsWith('.testblocks.json')) {
+    try {
+      const content = await readFileFromServer(node.path);
+      if (content && content.version && content.tests) {
+        node.testFile = content as TestFile;
+      }
+    } catch (error) {
+      console.warn(`Failed to load test file: ${node.path}`, error);
+    }
+  }
+
+  if (node.children) {
+    await Promise.all(node.children.map(child => loadTestFilesFromServer(child)));
+  }
+}
+
+/**
+ * Read a file from server project directory
+ */
+export async function readFileFromServer(filePath: string): Promise<unknown | null> {
+  try {
+    const response = await fetch(`/api/project/read?path=${encodeURIComponent(filePath)}`);
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data.content;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a file to server project directory
+ */
+export async function writeFileToServer(filePath: string, content: unknown): Promise<boolean> {
+  try {
+    const response = await fetch('/api/project/write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, content }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a new file in server project directory
+ */
+export async function createFileOnServer(filePath: string, content: unknown): Promise<boolean> {
+  try {
+    const response = await fetch('/api/project/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, content }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete a file from server project directory
+ */
+export async function deleteFileFromServer(filePath: string): Promise<boolean> {
+  try {
+    const response = await fetch(`/api/project/delete?path=${encodeURIComponent(filePath)}`, {
+      method: 'DELETE',
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Load globals.json from server project directory
+ */
+export async function loadGlobalsFromServer(): Promise<{
+  variables: Record<string, unknown> | null;
+  fullContent: GlobalsFile | null;
+}> {
+  try {
+    const content = await readFileFromServer('globals.json');
+    if (content) {
+      const globals = content as GlobalsFile;
+      return {
+        variables: globals.variables || null,
+        fullContent: globals,
+      };
+    }
+  } catch {
+    // globals.json doesn't exist
+  }
+  return { variables: null, fullContent: null };
+}
+
+/**
  * Recursively scan a directory for .testblocks.json files
  */
 export async function scanDirectory(

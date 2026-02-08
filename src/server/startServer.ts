@@ -67,6 +67,7 @@ export interface ServerOptions {
   port?: number;
   pluginsDir?: string;
   globalsDir?: string;
+  projectDir?: string;
   open?: boolean;
 }
 
@@ -132,6 +133,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   // Set directories
   const pluginsDir = options.pluginsDir || path.join(workingDir, 'plugins');
   const globalsDir = options.globalsDir || workingDir;
+  const projectDir = options.projectDir ? path.resolve(options.projectDir) : null;
 
   setPluginsDirectory(pluginsDir);
   setGlobalsDirectory(globalsDir);
@@ -164,6 +166,185 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   // Version endpoint
   app.get('/api/version', (_req, res) => {
     res.json({ version: VERSION });
+  });
+
+  // Initial project directory (for auto-open)
+  app.get('/api/initial-project', (_req, res) => {
+    res.json({ projectDir });
+  });
+
+  // Server-side file system access (when projectDir is specified)
+  // List files in project directory
+  app.get('/api/project/files', async (_req, res) => {
+    if (!projectDir) {
+      return res.status(400).json({ error: 'No project directory configured' });
+    }
+
+    try {
+      const scanDir = async (dirPath: string, relativePath: string = ''): Promise<unknown[]> => {
+        const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+        const items: unknown[] = [];
+
+        for (const entry of entries) {
+          // Skip hidden files and common non-project directories
+          if (entry.name.startsWith('.') || entry.name === 'node_modules') {
+            continue;
+          }
+
+          const entryRelativePath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+          const fullPath = path.join(dirPath, entry.name);
+
+          if (entry.isDirectory()) {
+            const children = await scanDir(fullPath, entryRelativePath);
+            items.push({
+              name: entry.name,
+              path: entryRelativePath,
+              type: 'folder',
+              children,
+            });
+          } else if (entry.name.endsWith('.testblocks.json') || entry.name === 'globals.json') {
+            items.push({
+              name: entry.name,
+              path: entryRelativePath,
+              type: 'file',
+            });
+          }
+        }
+
+        // Sort: folders first, then alphabetically
+        items.sort((a: unknown, b: unknown) => {
+          const aObj = a as { type: string; name: string };
+          const bObj = b as { type: string; name: string };
+          if (aObj.type !== bObj.type) {
+            return aObj.type === 'folder' ? -1 : 1;
+          }
+          return aObj.name.localeCompare(bObj.name);
+        });
+
+        return items;
+      };
+
+      const files = await scanDir(projectDir);
+      res.json({
+        projectDir,
+        name: path.basename(projectDir),
+        files,
+      });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Read a file from project directory
+  app.get('/api/project/read', async (req, res) => {
+    if (!projectDir) {
+      return res.status(400).json({ error: 'No project directory configured' });
+    }
+
+    const filePath = req.query.path as string;
+    if (!filePath) {
+      return res.status(400).json({ error: 'File path is required' });
+    }
+
+    // Security: ensure path doesn't escape project directory
+    const fullPath = path.resolve(projectDir, filePath);
+    if (!fullPath.startsWith(projectDir)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    try {
+      const content = await fs.promises.readFile(fullPath, 'utf-8');
+      res.json({ content: JSON.parse(content) });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Write a file to project directory
+  app.post('/api/project/write', async (req, res) => {
+    if (!projectDir) {
+      return res.status(400).json({ error: 'No project directory configured' });
+    }
+
+    const { path: filePath, content } = req.body as { path: string; content: unknown };
+    if (!filePath) {
+      return res.status(400).json({ error: 'File path is required' });
+    }
+
+    // Security: ensure path doesn't escape project directory
+    const fullPath = path.resolve(projectDir, filePath);
+    if (!fullPath.startsWith(projectDir)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    try {
+      // Ensure parent directory exists
+      await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.promises.writeFile(fullPath, JSON.stringify(content, null, 2));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Create a new file in project directory
+  app.post('/api/project/create', async (req, res) => {
+    if (!projectDir) {
+      return res.status(400).json({ error: 'No project directory configured' });
+    }
+
+    const { path: filePath, content } = req.body as { path: string; content: unknown };
+    if (!filePath) {
+      return res.status(400).json({ error: 'File path is required' });
+    }
+
+    // Security: ensure path doesn't escape project directory
+    const fullPath = path.resolve(projectDir, filePath);
+    if (!fullPath.startsWith(projectDir)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    try {
+      // Check if file already exists
+      try {
+        await fs.promises.access(fullPath);
+        return res.status(409).json({ error: 'File already exists' });
+      } catch {
+        // File doesn't exist, good
+      }
+
+      // Ensure parent directory exists
+      await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.promises.writeFile(fullPath, JSON.stringify(content, null, 2));
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
+  });
+
+  // Delete a file from project directory
+  app.delete('/api/project/delete', async (req, res) => {
+    if (!projectDir) {
+      return res.status(400).json({ error: 'No project directory configured' });
+    }
+
+    const filePath = req.query.path as string;
+    if (!filePath) {
+      return res.status(400).json({ error: 'File path is required' });
+    }
+
+    // Security: ensure path doesn't escape project directory
+    const fullPath = path.resolve(projectDir, filePath);
+    if (!fullPath.startsWith(projectDir)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    try {
+      await fs.promises.unlink(fullPath);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: (error as Error).message });
+    }
   });
 
   // List available plugins (with full block definitions for client registration)
@@ -560,6 +741,9 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     console.log(`  Working directory: ${workingDir}`);
     console.log(`  Plugins: ${pluginsDir}`);
     console.log(`  Globals: ${globalsDir}`);
+    if (projectDir) {
+      console.log(`  Project (auto-open): ${projectDir}`);
+    }
     console.log('\nPress Ctrl+C to stop\n');
 
     // Open browser if requested

@@ -59,6 +59,7 @@ import {
   setTestIdAttribute,
 } from './globals';
 import { codegenManager } from './codegenManager';
+import { parseOpenApiSpec, generateTestFiles, ImportOptions } from './openApiParser';
 
 // Set plugins directory (default to examples/plugins or can be overridden via env)
 const pluginsDir = process.env.PLUGINS_DIR || path.join(process.cwd(), 'examples', 'plugins');
@@ -426,6 +427,125 @@ app.get('/api/record/status/:sessionId', (req, res) => {
   });
 });
 
+// ===== OpenAPI Import Endpoints =====
+
+// Parse an OpenAPI/Swagger spec from URL
+app.post('/api/openapi/parse', async (req, res) => {
+  try {
+    const { url } = req.body as { url: string };
+
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+
+    console.log(`Parsing OpenAPI spec from URL: ${url}`);
+    const spec = await parseOpenApiSpec(url, true);
+
+    res.json({
+      info: spec.info,
+      servers: spec.servers,
+      endpoints: spec.endpoints.map(e => ({
+        operationId: e.operationId,
+        method: e.method,
+        path: e.path,
+        summary: e.summary,
+        description: e.description,
+        tags: e.tags,
+        deprecated: e.deprecated,
+        hasRequestBody: !!e.requestBody,
+        responses: e.responses.map(r => r.statusCode),
+      })),
+      securitySchemes: spec.securitySchemes,
+      tags: spec.tags,
+    });
+  } catch (error) {
+    console.error('Failed to parse OpenAPI spec:', error);
+    res.status(500).json({
+      error: 'Failed to parse OpenAPI spec',
+      message: (error as Error).message,
+    });
+  }
+});
+
+// Parse an OpenAPI/Swagger spec from content
+app.post('/api/openapi/parse-content', async (req, res) => {
+  try {
+    const { content } = req.body as { content: string };
+
+    if (!content) {
+      return res.status(400).json({ error: 'Content is required' });
+    }
+
+    console.log('Parsing OpenAPI spec from content');
+    const spec = await parseOpenApiSpec(content, false);
+
+    res.json({
+      info: spec.info,
+      servers: spec.servers,
+      endpoints: spec.endpoints.map(e => ({
+        operationId: e.operationId,
+        method: e.method,
+        path: e.path,
+        summary: e.summary,
+        description: e.description,
+        tags: e.tags,
+        deprecated: e.deprecated,
+        hasRequestBody: !!e.requestBody,
+        responses: e.responses.map(r => r.statusCode),
+      })),
+      securitySchemes: spec.securitySchemes,
+      tags: spec.tags,
+    });
+  } catch (error) {
+    console.error('Failed to parse OpenAPI spec:', error);
+    res.status(500).json({
+      error: 'Failed to parse OpenAPI spec',
+      message: (error as Error).message,
+    });
+  }
+});
+
+// Generate test files from selected endpoints
+app.post('/api/openapi/generate', async (req, res) => {
+  try {
+    const { url, content, selectedEndpoints, options } = req.body as {
+      url?: string;
+      content?: string;
+      selectedEndpoints: string[];
+      options: ImportOptions;
+    };
+
+    if (!url && !content) {
+      return res.status(400).json({ error: 'Either URL or content is required' });
+    }
+
+    if (!selectedEndpoints || selectedEndpoints.length === 0) {
+      return res.status(400).json({ error: 'No endpoints selected' });
+    }
+
+    console.log(`Generating tests for ${selectedEndpoints.length} endpoints`);
+    const spec = url
+      ? await parseOpenApiSpec(url, true)
+      : await parseOpenApiSpec(content!, false);
+
+    const files = generateTestFiles(spec, selectedEndpoints, options);
+
+    res.json({
+      files: files.map(f => ({
+        fileName: f.fileName,
+        testFile: f.testFile,
+        testCount: f.testFile.tests.length,
+      })),
+    });
+  } catch (error) {
+    console.error('Failed to generate test files:', error);
+    res.status(500).json({
+      error: 'Failed to generate test files',
+      message: (error as Error).message,
+    });
+  }
+});
+
 // ===== Report Generation Endpoints =====
 
 // Generate HTML report from test results
@@ -526,17 +646,20 @@ process.on('SIGINT', () => {
 app.listen(PORT, () => {
   console.log(`TestBlocks server running on http://localhost:${PORT}`);
   console.log('API endpoints:');
-  console.log('  GET  /api/health          - Health check');
-  console.log('  GET  /api/plugins         - List plugins');
-  console.log('  GET  /api/globals         - Get globals and snippets');
-  console.log('  POST /api/run             - Run all tests');
-  console.log('  POST /api/run/:id         - Run single test');
-  console.log('  POST /api/validate        - Validate test file');
-  console.log('  POST /api/record/start    - Start recording session');
-  console.log('  POST /api/record/stop     - Stop recording and get steps');
-  console.log('  GET  /api/record/status   - Get recording session status');
-  console.log('  POST /api/reports/html    - Generate HTML report');
-  console.log('  POST /api/reports/junit   - Generate JUnit XML report');
+  console.log('  GET  /api/health              - Health check');
+  console.log('  GET  /api/plugins             - List plugins');
+  console.log('  GET  /api/globals             - Get globals and snippets');
+  console.log('  POST /api/run                 - Run all tests');
+  console.log('  POST /api/run/:id             - Run single test');
+  console.log('  POST /api/validate            - Validate test file');
+  console.log('  POST /api/record/start        - Start recording session');
+  console.log('  POST /api/record/stop         - Stop recording and get steps');
+  console.log('  GET  /api/record/status       - Get recording session status');
+  console.log('  POST /api/openapi/parse       - Parse OpenAPI spec from URL');
+  console.log('  POST /api/openapi/parse-content - Parse OpenAPI spec from content');
+  console.log('  POST /api/openapi/generate    - Generate tests from OpenAPI spec');
+  console.log('  POST /api/reports/html        - Generate HTML report');
+  console.log('  POST /api/reports/junit       - Generate JUnit XML report');
 });
 
 export { TestExecutor };

@@ -11,6 +11,7 @@ export interface FileNode {
   folderHandle?: FileSystemDirectoryHandle;
   folderHooks?: FolderHooks;
   hooksFileHandle?: FileSystemFileHandle;
+  serverManaged?: boolean; // True when using --project-dir (server handles file I/O)
 }
 
 interface FileTreeProps {
