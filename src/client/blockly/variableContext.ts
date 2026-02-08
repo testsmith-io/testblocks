@@ -194,6 +194,45 @@ function formatValue(value: unknown): string {
 }
 
 /**
+ * Resolve all ${variableName} references in a string to their current values.
+ * Matches executor precedence: globals override file variables.
+ * Returns an array of { name, value, scope } for each variable found.
+ */
+export function resolveVariableReferences(text: string): { name: string; value: string; scope: string }[] {
+  const results: { name: string; value: string; scope: string }[] = [];
+  const regex = /\$\{([\w.]+)\}/g;
+  let match;
+  const seen = new Set<string>();
+
+  // Build a lookup map matching executor precedence:
+  // globals first, then file variables override (file is more specific)
+  const variables = getAvailableVariables();
+  const lookup = new Map<string, VariableInfo>();
+  for (const v of variables) {
+    if (v.scope === 'global') lookup.set(v.name, v);
+  }
+  // File vars, procedures, data columns override globals
+  for (const v of variables) {
+    if (v.scope !== 'global') lookup.set(v.name, v);
+  }
+
+  while ((match = regex.exec(text)) !== null) {
+    const varName = match[1];
+    if (seen.has(varName)) continue;
+    seen.add(varName);
+
+    const found = lookup.get(varName);
+    if (found) {
+      results.push({ name: varName, value: formatValue(found.value), scope: found.scope });
+    } else {
+      results.push({ name: varName, value: '(undefined)', scope: '' });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Get the current context (for debugging)
  */
 export function getContext(): VariableContext {

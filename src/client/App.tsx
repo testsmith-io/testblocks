@@ -7,6 +7,7 @@ import { FileTree, FileNode } from './components/FileTree';
 import { HelpDialog } from './components/HelpDialog';
 import { RecordDialog } from './components/RecordDialog';
 import { OpenApiImportDialog, GeneratedFile } from './components/OpenApiImportDialog';
+import { BrowserConfigDialog, BrowserConfig, defaultBrowserConfig } from './components/BrowserConfigDialog';
 import { workspaceToTestSteps } from './blockly/blockDefinitions';
 import { exportCustomBlocksAsProcedures, loadCustomBlocksFromProcedures, clearCustomBlocks } from './blockly/customBlockCreator';
 import { applyMatchToTestFile, BlockMatch } from './blockly/blockMatcher';
@@ -59,12 +60,13 @@ interface AppState {
   runningTestId: string | null;
   showVariables: boolean;
   showGlobalVariables: boolean;
-  headless: boolean;
+  browserConfig: BrowserConfig;
   editorTab: EditorTab;
   sidebarTab: 'files' | 'tests';
   showHelpDialog: boolean;
   showRecordDialog: boolean;
   showOpenApiDialog: boolean;
+  showBrowserConfigDialog: boolean;
   pluginsLoaded: boolean;
   autoSaveStatus: 'idle' | 'saving' | 'saved';
   resultsPanelCollapsed: boolean;
@@ -92,6 +94,57 @@ const initialTestFile: TestFile = {
   ],
 };
 
+const BROWSER_CONFIG_KEY = 'testblocks-browser-config';
+
+function loadBrowserConfig(): BrowserConfig {
+  try {
+    const stored = localStorage.getItem(BROWSER_CONFIG_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        headless: parsed.headless !== false,
+        testIdAttribute: parsed.testIdAttribute || '',
+        geolocation: parsed.geolocation || { latitude: '', longitude: '' },
+        locale: parsed.locale || '',
+        timezoneId: parsed.timezoneId || '',
+        viewport: parsed.viewport || { width: '', height: '' },
+        localStorage: Array.isArray(parsed.localStorage) ? parsed.localStorage : [],
+      };
+    }
+  } catch { /* ignore */ }
+  return {
+    ...defaultBrowserConfig,
+    headless: localStorage.getItem('testblocks-headless') !== 'false',
+  };
+}
+
+function saveBrowserConfig(config: BrowserConfig): void {
+  localStorage.setItem(BROWSER_CONFIG_KEY, JSON.stringify(config));
+}
+
+function buildBrowserConfigParams(config: BrowserConfig): string {
+  const params = new URLSearchParams();
+  params.set('headless', String(config.headless));
+  if (config.testIdAttribute) params.set('testIdAttribute', config.testIdAttribute);
+  if (config.locale) params.set('locale', config.locale);
+  if (config.timezoneId) params.set('timezoneId', config.timezoneId);
+  if (config.geolocation.latitude && config.geolocation.longitude) {
+    params.set('geoLatitude', config.geolocation.latitude);
+    params.set('geoLongitude', config.geolocation.longitude);
+  }
+  if (config.viewport.width && config.viewport.height) {
+    params.set('viewportWidth', config.viewport.width);
+    params.set('viewportHeight', config.viewport.height);
+  }
+  if (config.localStorage.length > 0) {
+    const validItems = config.localStorage.filter(item => item.name);
+    if (validItems.length > 0) {
+      params.set('localStorage', JSON.stringify(validItems));
+    }
+  }
+  return params.toString();
+}
+
 export default function App() {
   const { toasts, dismissToast } = useToast();
 
@@ -111,12 +164,13 @@ export default function App() {
     runningTestId: null,
     showVariables: false,
     showGlobalVariables: false,
-    headless: localStorage.getItem('testblocks-headless') !== 'false',
+    browserConfig: loadBrowserConfig(),
     editorTab: 'test',
     sidebarTab: 'files',
     showHelpDialog: false,
     showRecordDialog: false,
     showOpenApiDialog: false,
+    showBrowserConfigDialog: false,
     pluginsLoaded: false,
     autoSaveStatus: 'idle',
     resultsPanelCollapsed: false,
@@ -1800,7 +1854,7 @@ export default function App() {
       // Collect folder hooks from the hierarchy
       const folderHooks = collectFolderHooks(state.projectRoot, state.selectedFilePath);
 
-      const response = await fetch(`/api/run?headless=${state.headless}`, {
+      const response = await fetch(`/api/run?${buildBrowserConfigParams(state.browserConfig)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1846,7 +1900,7 @@ export default function App() {
       setState(prev => ({ ...prev, isRunning: false }));
       toast.error('Failed to run tests. Make sure the server is running.');
     }
-  }, [state.testFile, state.headless, state.projectRoot, state.selectedFilePath]);
+  }, [state.testFile, state.browserConfig, state.projectRoot, state.selectedFilePath]);
 
   // Run single test
   const handleRunTest = useCallback(async (testId: string, e?: React.MouseEvent) => {
@@ -1860,7 +1914,7 @@ export default function App() {
       // Collect folder hooks from the hierarchy
       const folderHooks = collectFolderHooks(state.projectRoot, state.selectedFilePath);
 
-      const response = await fetch(`/api/run?headless=${state.headless}`, {
+      const response = await fetch(`/api/run?${buildBrowserConfigParams(state.browserConfig)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1912,7 +1966,7 @@ export default function App() {
       setState(prev => ({ ...prev, isRunning: false, runningTestId: null }));
       toast.error('Failed to run test. Make sure the server is running.');
     }
-  }, [state.testFile, state.headless, state.projectRoot, state.selectedFilePath]);
+  }, [state.testFile, state.browserConfig, state.projectRoot, state.selectedFilePath]);
 
   // Run all tests in a folder (and subfolders)
   const handleRunFolder = useCallback(async (folderNode: FileNode) => {
@@ -1955,7 +2009,7 @@ export default function App() {
         // Collect folder hooks from the hierarchy for this file
         const folderHooks = collectFolderHooks(state.projectRoot, fileNode.path);
 
-        const response = await fetch(`/api/run?headless=${state.headless}`, {
+        const response = await fetch(`/api/run?${buildBrowserConfigParams(state.browserConfig)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2040,7 +2094,7 @@ export default function App() {
       setState(prev => ({ ...prev, isRunning: false, results: allResults }));
       toast.error('Failed to run tests. Make sure the server is running.');
     }
-  }, [state.headless, state.projectRoot]);
+  }, [state.browserConfig, state.projectRoot]);
 
   // Update test name
   const handleTestNameChange = useCallback((name: string) => {
@@ -2717,7 +2771,7 @@ export default function App() {
                   <span className="folder-hooks-label">Folder Hooks:</span> {state.editingFolderHooks.path}
                 </>
               ) : (
-                state.selectedFilePath
+                state.selectedFilePath?.replace(/\.testblocks\.json$/, '')
               )}
               {state.autoSaveStatus === 'saving' && (
                 <span className="auto-save-indicator saving">Saving...</span>
@@ -2759,22 +2813,13 @@ export default function App() {
           >
             Import OpenAPI
           </button>
-          {state.globalsFileContent?.testIdAttribute && (
-            <span className="test-id-indicator" title="Test ID Attribute (from globals.json)">
-              TestID: <code>{state.globalsFileContent.testIdAttribute}</code>
-            </span>
-          )}
-          <label className="headless-toggle">
-            <input
-              type="checkbox"
-              checked={state.headless}
-              onChange={(e) => {
-                localStorage.setItem('testblocks-headless', String(e.target.checked));
-                setState(prev => ({ ...prev, headless: e.target.checked }));
-              }}
-            />
-            <span>Headless</span>
-          </label>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setState(prev => ({ ...prev, showBrowserConfigDialog: true }))}
+            title="Browser configuration"
+          >
+            Browser
+          </button>
           <button
             className="btn btn-primary"
             onClick={handleRunAll}
@@ -3274,6 +3319,16 @@ export default function App() {
         onClose={() => setState(prev => ({ ...prev, showOpenApiDialog: false }))}
         onImport={handleOpenApiImport}
         hasProjectOpen={!!state.projectRoot?.folderHandle}
+      />
+
+      <BrowserConfigDialog
+        isOpen={state.showBrowserConfigDialog}
+        config={state.browserConfig}
+        onSave={(config) => {
+          saveBrowserConfig(config);
+          setState(prev => ({ ...prev, browserConfig: config, showBrowserConfigDialog: false }));
+        }}
+        onCancel={() => setState(prev => ({ ...prev, showBrowserConfigDialog: false }))}
       />
 
       {promptDialog && (

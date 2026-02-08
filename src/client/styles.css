@@ -926,33 +926,82 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.test-id-indicator code {
-  font-family: 'Monaco', 'Menlo', monospace;
-  background: rgba(255, 255, 255, 0.2);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
+/* ===== Browser Config Dialog ===== */
+.browser-config-dialog {
+  min-width: 450px;
+  max-width: 500px;
 }
 
-.headless-toggle {
+.browser-config-dialog .modal-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: white;
-  font-size: 14px;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.browser-config-dialog .modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.browser-config-dialog .modal-body {
+  padding: 0;
+}
+
+.browser-config-dialog .field-row {
+  display: flex;
+  gap: 12px;
+}
+
+.browser-config-dialog .field-row .prompt-field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.browser-config-dialog .localStorage-row {
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.browser-config-dialog .localStorage-row .btn-remove {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
   cursor: pointer;
-  padding: 8px 12px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.1);
+  font-size: 18px;
+  padding: 4px 8px;
+  flex-shrink: 0;
 }
 
-.headless-toggle:hover {
-  background: rgba(255, 255, 255, 0.2);
+.browser-config-dialog .localStorage-row .btn-remove:hover {
+  color: var(--error);
 }
 
-.headless-toggle input[type="checkbox"] {
+.browser-config-dialog .btn-sm {
+  padding: 4px 12px;
+  font-size: 12px;
+  background: var(--background);
+  color: var(--text-primary);
+}
+
+.browser-config-dialog .headless-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.browser-config-dialog .headless-field input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  cursor: pointer;
+}
+
+.browser-config-dialog .headless-field label {
+  font-weight: 500;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -1249,6 +1298,13 @@ body {
 .response-label {
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.response-endpoint {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
 }
 
 .response-status-code {

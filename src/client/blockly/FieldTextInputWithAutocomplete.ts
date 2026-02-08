@@ -4,7 +4,7 @@
  */
 
 import * as Blockly from 'blockly';
-import { getVariableSuggestions, VariableInfo } from './variableContext';
+import { getVariableSuggestions, resolveVariableReferences, VariableInfo } from './variableContext';
 
 // Scope colors for visual distinction
 const scopeColors: Record<string, string> = {
@@ -15,20 +15,108 @@ const scopeColors: Record<string, string> = {
   procedure: '#607D8B', // Gray
 };
 
+// Shared tooltip element for all fields
+let tooltipDiv: HTMLDivElement | null = null;
+let tooltipTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function getTooltipElement(): HTMLDivElement {
+  if (!tooltipDiv) {
+    tooltipDiv = document.createElement('div');
+    tooltipDiv.className = 'blockly-variable-tooltip';
+    tooltipDiv.style.cssText = `
+      position: fixed;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border: 1px solid #45475a;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: monospace;
+      font-size: 12px;
+      z-index: 10001;
+      pointer-events: none;
+      display: none;
+      max-width: 400px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    document.body.appendChild(tooltipDiv);
+  }
+  return tooltipDiv;
+}
+
+const tooltipScopeColors: Record<string, string> = {
+  global: '#a6e3a1',
+  file: '#89b4fa',
+  procedure: '#cba6f7',
+  test: '#fab387',
+};
+
+function showVariableTooltip(text: string, x: number, y: number): void {
+  const refs = resolveVariableReferences(text);
+  if (refs.length === 0) return;
+
+  const tip = getTooltipElement();
+  tip.innerHTML = refs.map(r => {
+    const scopeLabel = r.scope ? `<span style="color:${tooltipScopeColors[r.scope] || '#9399b2'};font-size:10px">[${r.scope}]</span> ` : '';
+    return `${scopeLabel}<span style="color:#89b4fa">\${${r.name}}</span> = <span style="color:#a6e3a1">${r.value}</span>`;
+  }).join('\n');
+  tip.style.left = `${x}px`;
+  tip.style.top = `${y + 8}px`;
+  tip.style.display = 'block';
+}
+
+function hideVariableTooltip(): void {
+  if (tooltipTimeout) {
+    clearTimeout(tooltipTimeout);
+    tooltipTimeout = null;
+  }
+  const tip = getTooltipElement();
+  tip.style.display = 'none';
+}
+
 export class FieldTextInputWithAutocomplete extends Blockly.FieldTextInput {
   private autocompleteDiv: HTMLDivElement | null = null;
   private selectedIndex = -1;
   private suggestions: VariableInfo[] = [];
   private isAutocompleteVisible = false;
+  private boundMouseEnter: ((e: MouseEvent) => void) | null = null;
+  private boundMouseLeave: (() => void) | null = null;
 
   constructor(value?: string, validator?: Blockly.FieldTextInputValidator) {
     super(value, validator);
   }
 
   /**
+   * Attach hover tooltip for variable references on the SVG field element.
+   */
+  initView(): void {
+    super.initView();
+
+    const fieldGroup = this.fieldGroup_;
+    if (!fieldGroup) return;
+
+    this.boundMouseEnter = (e: MouseEvent) => {
+      const text = this.getValue();
+      if (text && /\$\{[\w.]+\}/.test(text)) {
+        tooltipTimeout = setTimeout(() => {
+          showVariableTooltip(text, e.clientX, e.clientY);
+        }, 400);
+      }
+    };
+    this.boundMouseLeave = () => {
+      hideVariableTooltip();
+    };
+
+    fieldGroup.addEventListener('mouseenter', this.boundMouseEnter);
+    fieldGroup.addEventListener('mouseleave', this.boundMouseLeave);
+  }
+
+  /**
    * Create the field's editor widget.
    */
   protected showEditor_(e?: Event, quietInput?: boolean): void {
+    hideVariableTooltip();
     super.showEditor_(e, quietInput);
 
     // Get the HTML input element
@@ -294,6 +382,12 @@ export class FieldTextInputWithAutocomplete extends Blockly.FieldTextInput {
    * Dispose of the field and clean up
    */
   dispose(): void {
+    const fieldGroup = this.fieldGroup_;
+    if (fieldGroup) {
+      if (this.boundMouseEnter) fieldGroup.removeEventListener('mouseenter', this.boundMouseEnter);
+      if (this.boundMouseLeave) fieldGroup.removeEventListener('mouseleave', this.boundMouseLeave);
+    }
+    hideVariableTooltip();
     if (this.autocompleteDiv) {
       this.autocompleteDiv.remove();
       this.autocompleteDiv = null;

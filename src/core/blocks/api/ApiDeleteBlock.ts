@@ -30,6 +30,6 @@ export class ApiDeleteBlock extends StatementBlock {
     });
     const parsed = await parseResponse(response);
     storeResponse(context, parsed);
-    return parsed;
+    return { ...parsed, _summary: `DELETE ${url}`, _requestHeaders: headers };
   }
 }

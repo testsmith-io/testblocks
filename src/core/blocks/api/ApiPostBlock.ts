@@ -40,6 +40,7 @@ export class ApiPostBlock extends StatementBlock {
     });
     const parsed = await parseResponse(response);
     storeResponse(context, parsed);
-    return parsed;
+    const requestHeaders = { 'Content-Type': 'application/json', ...inlineHeaders };
+    return { ...parsed, _summary: `POST ${url}`, _requestHeaders: requestHeaders, _requestBody: body };
   }
 }

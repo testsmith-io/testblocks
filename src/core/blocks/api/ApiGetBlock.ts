@@ -29,6 +29,6 @@ export class ApiGetBlock extends StatementBlock {
     });
     const parsed = await parseResponse(response);
     storeResponse(context, parsed);
-    return parsed;
+    return { ...parsed, _summary: `GET ${url}`, _requestHeaders: headers };
   }
 }
