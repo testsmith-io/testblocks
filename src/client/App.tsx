@@ -6,6 +6,7 @@ import { StepResultItem } from './components/StepResultItem';
 import { FileTree, FileNode } from './components/FileTree';
 import { HelpDialog } from './components/HelpDialog';
 import { RecordDialog } from './components/RecordDialog';
+import { OpenApiImportDialog, GeneratedFile } from './components/OpenApiImportDialog';
 import { workspaceToTestSteps } from './blockly/blockDefinitions';
 import { exportCustomBlocksAsProcedures, loadCustomBlocksFromProcedures, clearCustomBlocks } from './blockly/customBlockCreator';
 import { applyMatchToTestFile, BlockMatch } from './blockly/blockMatcher';
@@ -30,6 +31,10 @@ import {
   setNestedValue,
   collectAllTestFiles,
   GlobalsFile,
+  getServerProjectDir,
+  loadProjectFromServer,
+  writeFileToServer,
+  loadGlobalsFromServer,
 } from './utils';
 
 type EditorTab = 'test' | 'beforeAll' | 'afterAll' | 'beforeEach' | 'afterEach';
@@ -41,6 +46,7 @@ interface AppState {
   selectedFilePath: string | null;
   globalVariables: Record<string, unknown> | null;
   globalsFileContent: GlobalsFile | null;
+  serverProjectDir: string | null; // When using --project-dir, server handles file I/O
   // Current file state
   testFile: TestFile;
   selectedTestIndex: number;
@@ -58,6 +64,7 @@ interface AppState {
   sidebarTab: 'files' | 'tests';
   showHelpDialog: boolean;
   showRecordDialog: boolean;
+  showOpenApiDialog: boolean;
   pluginsLoaded: boolean;
   autoSaveStatus: 'idle' | 'saving' | 'saved';
   resultsPanelCollapsed: boolean;
@@ -94,6 +101,7 @@ export default function App() {
     selectedFilePath: null,
     globalVariables: null,
     globalsFileContent: null,
+    serverProjectDir: null,
     testFile: initialTestFile,
     selectedTestIndex: 0,
     editingFolderHooks: null,
@@ -108,6 +116,7 @@ export default function App() {
     sidebarTab: 'files',
     showHelpDialog: false,
     showRecordDialog: false,
+    showOpenApiDialog: false,
     pluginsLoaded: false,
     autoSaveStatus: 'idle',
     resultsPanelCollapsed: false,
@@ -170,6 +179,30 @@ export default function App() {
     // Debounce auto-save by 1 second
     autoSaveTimeoutRef.current = setTimeout(async () => {
       const selectedNode = findNodeByPath(state.projectRoot, state.selectedFilePath);
+
+      // Server-managed mode: use API
+      if (state.serverProjectDir && selectedNode) {
+        try {
+          const success = await writeFileToServer(state.selectedFilePath!, state.testFile);
+          if (success) {
+            selectedNode.testFile = state.testFile;
+            console.log('[Auto-save] Saved via server:', state.selectedFilePath);
+            setState(prev => ({ ...prev, autoSaveStatus: 'saved' }));
+            setTimeout(() => {
+              setState(prev => prev.autoSaveStatus === 'saved' ? { ...prev, autoSaveStatus: 'idle' } : prev);
+            }, 2000);
+          } else {
+            console.error('[Auto-save] Server save failed');
+            setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+          }
+        } catch (error) {
+          console.error('[Auto-save] Failed to save via server:', error);
+          setState(prev => ({ ...prev, autoSaveStatus: 'idle' }));
+        }
+        return;
+      }
+
+      // File System Access API mode
       if (selectedNode?.handle) {
         try {
           const writable = await (selectedNode.handle as FileSystemFileHandle).createWritable();
@@ -196,7 +229,7 @@ export default function App() {
         clearTimeout(autoSaveTimeoutRef.current);
       }
     };
-  }, [state.testFile, state.selectedFilePath, state.projectRoot]);
+  }, [state.testFile, state.selectedFilePath, state.projectRoot, state.serverProjectDir]);
 
   // Auto-save effect for folder hooks
   useEffect(() => {
@@ -298,31 +331,68 @@ export default function App() {
   }, []);
 
   // Try to restore last opened folder on startup
+  // First check if server has a project directory configured (--project-dir)
   useEffect(() => {
-    const tryRestoreLastFolder = async () => {
+    const tryLoadProject = async () => {
       try {
-        const storedHandle = await getStoredDirectoryHandle();
-        if (storedHandle) {
-          // Check current permission state first
-          const currentPermission = await storedHandle.queryPermission({ mode: 'readwrite' });
+        // First, check if server has a project directory configured
+        console.log('[Restore] Checking for server project directory...');
+        const serverDir = await getServerProjectDir();
 
-          if (currentPermission === 'granted') {
-            // Already have permission, open directly
-            await openDirectoryFromHandle(storedHandle);
-            console.log('Restored last opened folder:', storedHandle.name);
-          } else {
-            // Need permission - show the folder name so user can re-open
-            setState(prev => ({ ...prev, lastFolderName: storedHandle.name }));
-            console.log('Last folder needs permission:', storedHandle.name);
+        if (serverDir) {
+          console.log('[Restore] Server project directory found:', serverDir);
+          // Load project from server
+          const projectRoot = await loadProjectFromServer();
+          if (projectRoot) {
+            // Load globals from server
+            const { variables, fullContent } = await loadGlobalsFromServer();
+            if (variables) {
+              setGlobalVariables(variables);
+            }
+
+            setState(prev => ({
+              ...prev,
+              projectRoot,
+              serverProjectDir: serverDir,
+              globalVariables: variables,
+              globalsFileContent: fullContent,
+            }));
+            console.log('[Restore] Successfully loaded server project:', projectRoot.name);
+            return;
           }
+        }
+
+        // No server project, try to restore from IndexedDB
+        console.log('[Restore] Attempting to restore last folder from IndexedDB...');
+        const storedHandle = await getStoredDirectoryHandle();
+
+        if (!storedHandle) {
+          console.log('[Restore] No stored handle found');
+          return;
+        }
+
+        console.log('[Restore] Found stored handle:', storedHandle.name);
+
+        // Check current permission state first
+        const currentPermission = await storedHandle.queryPermission({ mode: 'readwrite' });
+        console.log('[Restore] Permission status:', currentPermission);
+
+        if (currentPermission === 'granted') {
+          // Already have permission, open directly
+          await openDirectoryFromHandle(storedHandle);
+          console.log('[Restore] Successfully restored folder:', storedHandle.name);
+        } else {
+          // Need permission - show the folder name so user can re-open
+          setState(prev => ({ ...prev, lastFolderName: storedHandle.name }));
+          console.log('[Restore] Folder needs permission, showing reopen prompt:', storedHandle.name);
         }
       } catch (e) {
         // Permission denied or handle expired - that's okay
-        console.log('Could not restore last folder:', (e as Error).message);
+        console.error('[Restore] Could not restore last folder:', (e as Error).message);
       }
     };
 
-    tryRestoreLastFolder();
+    tryLoadProject();
   }, [openDirectoryFromHandle]);
 
   // Fetch version on startup
@@ -428,21 +498,32 @@ export default function App() {
     // Check if the modern API is supported
     if ('showDirectoryPicker' in window) {
       try {
+        console.log('[OpenFolder] Opening directory picker...');
         const dirHandle = await (window as unknown as { showDirectoryPicker: () => Promise<FileSystemDirectoryHandle> }).showDirectoryPicker();
 
+        console.log('[OpenFolder] Selected folder:', dirHandle.name);
+
         // Save the handle for future sessions
-        await saveDirectoryHandle(dirHandle);
+        try {
+          await saveDirectoryHandle(dirHandle);
+          console.log('[OpenFolder] Saved handle to IndexedDB');
+        } catch (saveError) {
+          console.error('[OpenFolder] Failed to save handle to IndexedDB:', saveError);
+          // Continue anyway - the folder will still open, just won't persist
+        }
 
         await openDirectoryFromHandle(dirHandle);
         setState(prev => ({ ...prev, lastFolderName: null }));
+        console.log('[OpenFolder] Folder opened successfully');
       } catch (e) {
         if ((e as Error).name !== 'AbortError') {
-          console.error('Failed to open folder:', e);
+          console.error('[OpenFolder] Failed to open folder:', e);
           toast.error('Failed to open folder: ' + (e as Error).message);
         }
       }
     } else {
       // Fallback: use webkitdirectory input
+      console.log('[OpenFolder] Using fallback webkitdirectory');
       folderInputRef.current?.click();
     }
   }, [openDirectoryFromHandle]);
@@ -2318,6 +2399,133 @@ export default function App() {
     }
   }, []);
 
+  // Handle imported files from OpenAPI
+  const handleOpenApiImport = useCallback((files: GeneratedFile[]) => {
+    if (files.length === 0) {
+      toast.warning('No files to import');
+      return;
+    }
+
+    setState(prev => {
+      // Find the directory to save in
+      let targetDirHandle: FileSystemDirectoryHandle | null = null;
+      let targetDirPath = '';
+
+      // Try to find the parent folder of the currently selected file
+      if (prev.selectedFilePath && prev.projectRoot) {
+        const pathParts = prev.selectedFilePath.split('/');
+        pathParts.pop(); // Remove filename
+        const parentPath = pathParts.join('/');
+
+        if (parentPath) {
+          const parentNode = findNodeByPath(prev.projectRoot, parentPath);
+          if (parentNode?.folderHandle) {
+            targetDirHandle = parentNode.folderHandle;
+            targetDirPath = parentPath;
+          }
+        }
+      }
+
+      // Fall back to project root
+      if (!targetDirHandle && prev.projectRoot?.folderHandle) {
+        targetDirHandle = prev.projectRoot.folderHandle;
+        targetDirPath = prev.projectRoot.path;
+      }
+
+      // If we have a directory, create the files
+      if (targetDirHandle) {
+        (async () => {
+          try {
+            const createdFiles: { path: string; node: FileNode }[] = [];
+
+            for (const file of files) {
+              // Create the new file
+              const newFileHandle = await targetDirHandle!.getFileHandle(file.fileName, { create: true });
+              const writable = await newFileHandle.createWritable();
+              await writable.write(JSON.stringify(file.testFile, null, 2));
+              await writable.close();
+
+              const newFilePath = targetDirPath ? `${targetDirPath}/${file.fileName}` : file.fileName;
+              const newFileNode: FileNode = {
+                name: file.fileName,
+                path: newFilePath,
+                type: 'file',
+                testFile: file.testFile,
+                handle: newFileHandle,
+              };
+
+              createdFiles.push({ path: newFilePath, node: newFileNode });
+            }
+
+            console.log('[handleOpenApiImport] Created files:', createdFiles.map(f => f.path));
+
+            // Clone the project root and add the new files
+            const cloneNode = (node: FileNode): FileNode => {
+              const cloned: FileNode = { ...node };
+              if (node.children) {
+                cloned.children = node.children.map(cloneNode);
+              }
+              return cloned;
+            };
+
+            const newProjectRoot = prev.projectRoot ? cloneNode(prev.projectRoot) : null;
+
+            if (newProjectRoot) {
+              // Find the target folder and add the new files
+              const addFilesToFolder = (node: FileNode): boolean => {
+                if (node.path === targetDirPath || (node.path === node.name && targetDirPath === node.name)) {
+                  if (!node.children) node.children = [];
+                  for (const { node: fileNode } of createdFiles) {
+                    node.children.push(fileNode);
+                  }
+                  // Sort children: folders first, then files alphabetically
+                  node.children.sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                  });
+                  return true;
+                }
+                if (node.children) {
+                  for (const child of node.children) {
+                    if (addFilesToFolder(child)) return true;
+                  }
+                }
+                return false;
+              };
+
+              addFilesToFolder(newProjectRoot);
+
+              // Update state with first file selected
+              const firstFile = createdFiles[0];
+              setState(s => ({
+                ...s,
+                projectRoot: newProjectRoot,
+                selectedFilePath: firstFile.path,
+                testFile: firstFile.node.testFile!,
+                selectedTestIndex: 0,
+                editorTab: 'test',
+                showOpenApiDialog: false,
+              }));
+            }
+
+            const testCount = files.reduce((sum, f) => sum + f.testCount, 0);
+            toast.success(`Imported ${files.length} file(s) with ${testCount} test(s) from OpenAPI`);
+          } catch (error) {
+            console.error('[handleOpenApiImport] Failed to create files:', error);
+            toast.error('Failed to create test files');
+          }
+        })();
+      } else {
+        toast.warning('No project folder open. Please open a folder first.');
+      }
+
+      return {
+        ...prev,
+        showOpenApiDialog: false,
+      };
+    });
+  }, []);
+
   // Get test result
   const getTestResult = (testId: string) => {
     return state.results.find(r => r.testId === testId);
@@ -2544,6 +2752,13 @@ export default function App() {
           >
             Record
           </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setState(prev => ({ ...prev, showOpenApiDialog: true }))}
+            title="Import tests from OpenAPI/Swagger specification"
+          >
+            Import OpenAPI
+          </button>
           {state.globalsFileContent?.testIdAttribute && (
             <span className="test-id-indicator" title="Test ID Attribute (from globals.json)">
               TestID: <code>{state.globalsFileContent.testIdAttribute}</code>
@@ -2767,6 +2982,46 @@ export default function App() {
 
         {/* Editor area */}
         <div className="editor-area">
+          {/* Welcome screen when no project is open */}
+          {!state.projectRoot && !state.selectedFilePath && (
+            <div className="welcome-screen">
+              <div className="welcome-content">
+                <h2>Welcome to TestBlocks</h2>
+                <p>Open a folder to get started with your test files.</p>
+
+                {state.lastFolderName && (
+                  <div className="reopen-section">
+                    <p className="reopen-message">
+                      Continue with your last project:
+                    </p>
+                    <button
+                      className="btn btn-primary btn-large reopen-btn"
+                      onClick={handleReopenLastFolder}
+                    >
+                      Reopen "{state.lastFolderName}"
+                    </button>
+                  </div>
+                )}
+
+                <div className="welcome-actions">
+                  <button className="btn btn-secondary btn-large" onClick={handleOpenFolder}>
+                    Open Folder
+                  </button>
+                  <button className="btn btn-secondary btn-large" onClick={handleLoad}>
+                    Open File
+                  </button>
+                </div>
+
+                <div className="welcome-tip">
+                  <strong>Tip:</strong> Use <code>testblocks serve --project-dir ./your-project</code> to auto-open a project directory.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Editor content (shown when a project or file is open) */}
+          {(state.projectRoot || state.selectedFilePath) && (
+          <>
           {/* Lifecycle tabs */}
           <div className="editor-tabs">
             <button
@@ -2908,6 +3163,8 @@ export default function App() {
               currentFilePath={state.selectedFilePath || undefined}
             />
           </div>
+          </>
+          )}
         </div>
 
         {/* Results panel */}
@@ -3010,6 +3267,13 @@ export default function App() {
         isOpen={state.showRecordDialog}
         onClose={() => setState(prev => ({ ...prev, showRecordDialog: false }))}
         onStepsRecorded={handleStepsRecorded}
+      />
+
+      <OpenApiImportDialog
+        isOpen={state.showOpenApiDialog}
+        onClose={() => setState(prev => ({ ...prev, showOpenApiDialog: false }))}
+        onImport={handleOpenApiImport}
+        hasProjectOpen={!!state.projectRoot?.folderHandle}
       />
 
       {promptDialog && (
