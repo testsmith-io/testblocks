@@ -99,7 +99,7 @@ export function StepResultItem({ step }: StepResultItemProps) {
   const [isExpanded, setIsExpanded] = useState(step.status === 'failed' && (!!step.screenshot || !!step.error?.stack));
 
   const isApiRequest = isApiRequestStep(step.stepType);
-  const response = step.output as { status?: number; headers?: Record<string, string>; body?: unknown } | undefined;
+  const response = step.output as { status?: number; headers?: Record<string, string>; body?: unknown; _summary?: string; _requestHeaders?: Record<string, string>; _requestBody?: unknown } | undefined;
   const canExpand = hasExpandableDetails(step);
   const summary = getStepSummary(step);
 
@@ -152,6 +152,13 @@ export function StepResultItem({ step }: StepResultItemProps) {
           {isApiRequest && response ? (
             // API Response details
             <>
+              {response._summary && (
+                <div className="response-status">
+                  <span className="response-label">Endpoint:</span>
+                  <span className="response-endpoint">{response._summary}</span>
+                </div>
+              )}
+
               <div className="response-status">
                 <span className="response-label">Status:</span>
                 <span className={`response-status-code ${getStatusClass(response.status)}`}>
@@ -159,9 +166,29 @@ export function StepResultItem({ step }: StepResultItemProps) {
                 </span>
               </div>
 
+              <details className="response-section">
+                <summary>Request Headers</summary>
+                <pre className="response-pre">
+                  {response._requestHeaders && Object.keys(response._requestHeaders).length > 0
+                    ? JSON.stringify(response._requestHeaders, null, 2)
+                    : '(none set)'}
+                </pre>
+              </details>
+
+              {response._requestBody !== undefined && (
+                <details className="response-section">
+                  <summary>Request Body</summary>
+                  <pre className="response-pre">
+                    {typeof response._requestBody === 'string'
+                      ? response._requestBody
+                      : JSON.stringify(response._requestBody, null, 2)}
+                  </pre>
+                </details>
+              )}
+
               {response.headers && Object.keys(response.headers).length > 0 && (
                 <details className="response-section">
-                  <summary>Headers</summary>
+                  <summary>Response Headers</summary>
                   <pre className="response-pre">
                     {JSON.stringify(response.headers, null, 2)}
                   </pre>
@@ -170,7 +197,7 @@ export function StepResultItem({ step }: StepResultItemProps) {
 
               {response.body !== undefined && (
                 <details className="response-section" open>
-                  <summary>Body</summary>
+                  <summary>Response Body</summary>
                   <pre className="response-pre">
                     {typeof response.body === 'string'
                       ? response.body

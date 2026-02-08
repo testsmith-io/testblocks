@@ -78,6 +78,11 @@ export interface ExecutorOptions {
   testIdAttribute?: string;
   baseDir?: string; // Base directory for resolving relative file paths (e.g., dataFile)
   procedures?: Record<string, ProcedureDefinition>; // Project-level procedures from globals
+  locale?: string;
+  timezoneId?: string;
+  geolocation?: { latitude: number; longitude: number };
+  viewport?: { width: number; height: number };
+  localStorage?: { name: string; value: string }[];
 }
 
 export class TestExecutor {
@@ -120,10 +125,35 @@ export class TestExecutor {
     this.browser = await chromium.launch({
       headless: this.options.headless,
     });
-    // Use consistent viewport size for headless and headed modes
-    this.context = await this.browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-    });
+
+    // Build browser context options
+    const contextOptions: Record<string, unknown> = {
+      viewport: this.options.viewport || { width: 1920, height: 1080 },
+    };
+
+    if (this.options.locale) {
+      contextOptions.locale = this.options.locale;
+    }
+    if (this.options.timezoneId) {
+      contextOptions.timezoneId = this.options.timezoneId;
+    }
+    if (this.options.geolocation) {
+      contextOptions.geolocation = this.options.geolocation;
+      contextOptions.permissions = ['geolocation'];
+    }
+
+    console.log('Browser context options:', JSON.stringify(contextOptions));
+    this.context = await this.browser.newContext(contextOptions);
+
+    if (this.options.localStorage && this.options.localStorage.length > 0) {
+      const items = this.options.localStorage;
+      await this.context.addInitScript((storageItems: { name: string; value: string }[]) => {
+        for (const item of storageItems) {
+          localStorage.setItem(item.name, item.value);
+        }
+      }, items);
+    }
+
     this.page = await this.context.newPage();
 
     if (this.options.timeout) {
@@ -190,8 +220,8 @@ export class TestExecutor {
 
     const sharedContext: ExecutionContext = {
       variables: new Map(Object.entries({
-        ...this.resolveVariableDefaults(testFile.variables),
         ...this.resolveVariableDefaults(this.options.variables),
+        ...this.resolveVariableDefaults(testFile.variables),
       })),
       results: [],
       browser: this.browser,
@@ -457,8 +487,8 @@ export class TestExecutor {
     const baseVariables = sharedContext
       ? Object.fromEntries(sharedContext.variables)
       : {
-          ...this.resolveVariableDefaults(fileVariables),
           ...this.resolveVariableDefaults(this.options.variables),
+          ...this.resolveVariableDefaults(fileVariables),
         };
 
     const context: ExecutionContext = {
@@ -566,8 +596,8 @@ export class TestExecutor {
     const baseVariables = sharedContext
       ? Object.fromEntries(sharedContext.variables)
       : {
-          ...this.resolveVariableDefaults(fileVariables),
           ...this.resolveVariableDefaults(this.options.variables),
+          ...this.resolveVariableDefaults(fileVariables),
         };
 
     const context: ExecutionContext = {

@@ -214,7 +214,7 @@ function FileTreeNode({
         <span className="file-tree-icon">
           {isFolder ? (isExpanded ? '📂' : '📁') : '📄'}
         </span>
-        <span className="file-tree-name">{node.name}</span>
+        <span className="file-tree-name">{isFolder ? node.name : node.name.replace('.testblocks.json', '')}</span>
         {failedFiles?.has(node.path) && (
           <span className="file-tree-failed-indicator" title="Tests failed in previous run">●</span>
         )}

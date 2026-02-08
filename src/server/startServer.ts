@@ -430,14 +430,36 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       const globalProcs = getGlobalProcedures();
       const testIdAttr = getTestIdAttribute();
 
-      const executor = new TestExecutor({
+      const executorOpts: Record<string, unknown> = {
         headless: req.query.headless !== 'false',
         timeout: Number(req.query.timeout) || getGlobalTimeout(),
         variables: globalVars,
         procedures: globalProcs,
-        testIdAttribute: testIdAttr,
+        testIdAttribute: (req.query.testIdAttribute as string) || testIdAttr,
         baseDir: globalsDir,
-      });
+      };
+
+      if (req.query.locale) executorOpts.locale = req.query.locale as string;
+      if (req.query.timezoneId) executorOpts.timezoneId = req.query.timezoneId as string;
+      if (req.query.geoLatitude && req.query.geoLongitude) {
+        executorOpts.geolocation = {
+          latitude: parseFloat(req.query.geoLatitude as string),
+          longitude: parseFloat(req.query.geoLongitude as string),
+        };
+      }
+      if (req.query.viewportWidth && req.query.viewportHeight) {
+        executorOpts.viewport = {
+          width: parseInt(req.query.viewportWidth as string, 10),
+          height: parseInt(req.query.viewportHeight as string, 10),
+        };
+      }
+      if (req.query.localStorage) {
+        try {
+          executorOpts.localStorage = JSON.parse(req.query.localStorage as string);
+        } catch { /* ignore invalid JSON */ }
+      }
+
+      const executor = new TestExecutor(executorOpts as import('./executor').ExecutorOptions);
 
       const results = await executor.runTestFile(mergedTestFile);
 
@@ -490,14 +512,36 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
       const globalProcs = getGlobalProcedures();
       const testIdAttr = getTestIdAttribute();
 
-      const executor = new TestExecutor({
+      const executorOpts: Record<string, unknown> = {
         headless: req.query.headless !== 'false',
         timeout: Number(req.query.timeout) || getGlobalTimeout(),
         variables: globalVars,
         procedures: globalProcs,
-        testIdAttribute: testIdAttr,
+        testIdAttribute: (req.query.testIdAttribute as string) || testIdAttr,
         baseDir: globalsDir,
-      });
+      };
+
+      if (req.query.locale) executorOpts.locale = req.query.locale as string;
+      if (req.query.timezoneId) executorOpts.timezoneId = req.query.timezoneId as string;
+      if (req.query.geoLatitude && req.query.geoLongitude) {
+        executorOpts.geolocation = {
+          latitude: parseFloat(req.query.geoLatitude as string),
+          longitude: parseFloat(req.query.geoLongitude as string),
+        };
+      }
+      if (req.query.viewportWidth && req.query.viewportHeight) {
+        executorOpts.viewport = {
+          width: parseInt(req.query.viewportWidth as string, 10),
+          height: parseInt(req.query.viewportHeight as string, 10),
+        };
+      }
+      if (req.query.localStorage) {
+        try {
+          executorOpts.localStorage = JSON.parse(req.query.localStorage as string);
+        } catch { /* ignore invalid JSON */ }
+      }
+
+      const executor = new TestExecutor(executorOpts as import('./executor').ExecutorOptions);
 
       // Register file-level procedures (overrides globals)
       if (mergedTestFile.procedures) {
