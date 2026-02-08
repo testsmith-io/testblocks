@@ -9,6 +9,7 @@ export interface GlobalsFile {
   variables?: Record<string, unknown>;
   config?: Record<string, unknown>;
   testIdAttribute?: string;
+  browserConfig?: Record<string, unknown>;
 }
 
 /**

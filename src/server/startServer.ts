@@ -5,6 +5,7 @@ import fs from 'fs';
 import { TestFile, TestResult, FolderHooks } from '../core';
 import { TestExecutor } from './executor';
 import { generateHTMLReport, generateJUnitXML, getTimestamp, ReportData } from '../cli/reporters';
+import { parseOpenApiSpec, generateTestFiles, ImportOptions } from './openApiParser';
 
 // Read version from package.json
 function getVersion(): string {
@@ -410,6 +411,63 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
     }
     setTestIdAttribute(testIdAttribute);
     res.json({ testIdAttribute: getTestIdAttribute() });
+  });
+
+  // OpenAPI import endpoints
+  app.post('/api/openapi/parse', async (req, res) => {
+    try {
+      const { url } = req.body as { url: string };
+      if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
+      }
+      const spec = await parseOpenApiSpec(url, true);
+      res.json(spec);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to parse spec', message: (error as Error).message });
+    }
+  });
+
+  app.post('/api/openapi/parse-content', async (req, res) => {
+    try {
+      const { content } = req.body as { content: string };
+      if (!content) {
+        return res.status(400).json({ error: 'Content is required' });
+      }
+      const spec = await parseOpenApiSpec(content, false);
+      res.json(spec);
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to parse spec', message: (error as Error).message });
+    }
+  });
+
+  app.post('/api/openapi/generate', async (req, res) => {
+    try {
+      const { url, content, selectedEndpoints, options } = req.body as {
+        url?: string;
+        content?: string;
+        selectedEndpoints: string[];
+        options: ImportOptions;
+      };
+
+      if (!selectedEndpoints || selectedEndpoints.length === 0) {
+        return res.status(400).json({ error: 'No endpoints selected' });
+      }
+
+      const spec = url
+        ? await parseOpenApiSpec(url, true)
+        : await parseOpenApiSpec(content!, false);
+
+      const files = generateTestFiles(spec, selectedEndpoints, options);
+      res.json({
+        files: files.map(f => ({
+          fileName: f.fileName,
+          testFile: f.testFile,
+          testCount: f.testFile.tests.length,
+        })),
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to generate tests', message: (error as Error).message });
+    }
   });
 
   // Run tests
