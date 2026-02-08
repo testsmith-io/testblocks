@@ -193,6 +193,7 @@ program
       }
 
       let globalTimeout: number | undefined;
+      let globalBrowserConfig: Record<string, unknown> | undefined;
       if (fs.existsSync(globalsPath)) {
         try {
           const globalsContent = fs.readFileSync(globalsPath, 'utf-8');
@@ -205,6 +206,9 @@ program
           }
           if (typeof globals.timeout === 'number') {
             globalTimeout = globals.timeout;
+          }
+          if (globals.browserConfig && typeof globals.browserConfig === 'object') {
+            globalBrowserConfig = globals.browserConfig;
           }
         } catch (e) {
           console.warn(`Warning: Could not load globals from ${globalsPath}: ${(e as Error).message}`);
@@ -278,6 +282,41 @@ program
         variables,
         procedures: globalProcedures,
       };
+
+      // Apply browser config from globals.json
+      if (globalBrowserConfig) {
+        if (globalBrowserConfig.testIdAttribute) {
+          executorOptions.testIdAttribute = globalBrowserConfig.testIdAttribute as string;
+        }
+        if (globalBrowserConfig.locale) {
+          executorOptions.locale = globalBrowserConfig.locale as string;
+        }
+        if (globalBrowserConfig.timezoneId) {
+          executorOptions.timezoneId = globalBrowserConfig.timezoneId as string;
+        }
+        const geo = globalBrowserConfig.geolocation as { latitude?: string; longitude?: string } | undefined;
+        if (geo?.latitude && geo?.longitude) {
+          executorOptions.geolocation = {
+            latitude: parseFloat(geo.latitude),
+            longitude: parseFloat(geo.longitude),
+          };
+        }
+        const vp = globalBrowserConfig.viewport as { width?: string; height?: string } | undefined;
+        if (vp?.width && vp?.height) {
+          executorOptions.viewport = {
+            width: parseInt(vp.width, 10),
+            height: parseInt(vp.height, 10),
+          };
+        }
+        const ls = globalBrowserConfig.localStorage as { name: string; value: string }[] | undefined;
+        if (Array.isArray(ls) && ls.length > 0) {
+          executorOptions.localStorage = ls;
+        }
+        // --headed CLI flag overrides globals.json headless setting
+        if (!options.headed && globalBrowserConfig.headless === false) {
+          executorOptions.headless = false;
+        }
+      }
 
       // Create reporters (supports multiple, comma-separated)
       const reporters = createReporters(options.reporter, options.output);
@@ -469,7 +508,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.9.8',
+            '@testsmith/testblocks': '^0.9.9',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));

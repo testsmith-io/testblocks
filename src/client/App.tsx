@@ -96,30 +96,34 @@ const initialTestFile: TestFile = {
 
 const BROWSER_CONFIG_KEY = 'testblocks-browser-config';
 
-function loadBrowserConfig(): BrowserConfig {
+function parseBrowserConfig(parsed: Record<string, unknown>): BrowserConfig {
+  return {
+    headless: parsed.headless !== false,
+    testIdAttribute: (parsed.testIdAttribute as string) || '',
+    geolocation: (parsed.geolocation as { latitude: string; longitude: string }) || { latitude: '', longitude: '' },
+    locale: (parsed.locale as string) || '',
+    timezoneId: (parsed.timezoneId as string) || '',
+    viewport: (parsed.viewport as { width: string; height: string }) || { width: '', height: '' },
+    localStorage: Array.isArray(parsed.localStorage) ? parsed.localStorage : [],
+  };
+}
+
+function loadBrowserConfig(globalsFileContent?: Record<string, unknown> | null): BrowserConfig {
+  // First try globals.json (shared with team)
+  if (globalsFileContent?.browserConfig) {
+    return parseBrowserConfig(globalsFileContent.browserConfig as Record<string, unknown>);
+  }
+  // Fall back to localStorage (per-machine)
   try {
     const stored = localStorage.getItem(BROWSER_CONFIG_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return {
-        headless: parsed.headless !== false,
-        testIdAttribute: parsed.testIdAttribute || '',
-        geolocation: parsed.geolocation || { latitude: '', longitude: '' },
-        locale: parsed.locale || '',
-        timezoneId: parsed.timezoneId || '',
-        viewport: parsed.viewport || { width: '', height: '' },
-        localStorage: Array.isArray(parsed.localStorage) ? parsed.localStorage : [],
-      };
+      return parseBrowserConfig(JSON.parse(stored));
     }
   } catch { /* ignore */ }
   return {
     ...defaultBrowserConfig,
     headless: localStorage.getItem('testblocks-headless') !== 'false',
   };
-}
-
-function saveBrowserConfig(config: BrowserConfig): void {
-  localStorage.setItem(BROWSER_CONFIG_KEY, JSON.stringify(config));
 }
 
 function buildBrowserConfigParams(config: BrowserConfig): string {
@@ -379,6 +383,7 @@ export default function App() {
       projectRoot: root,
       globalVariables: globalsResult.variables,
       globalsFileContent: globalsResult.fullContent,
+      browserConfig: loadBrowserConfig(globalsResult.fullContent),
       selectedFilePath: null,
       sidebarTab: 'files',
     }));
@@ -410,6 +415,7 @@ export default function App() {
               serverProjectDir: serverDir,
               globalVariables: variables,
               globalsFileContent: fullContent,
+              browserConfig: loadBrowserConfig(fullContent),
             }));
             console.log('[Restore] Successfully loaded server project:', projectRoot.name);
             return;
@@ -3325,8 +3331,38 @@ export default function App() {
         isOpen={state.showBrowserConfigDialog}
         config={state.browserConfig}
         onSave={(config) => {
-          saveBrowserConfig(config);
-          setState(prev => ({ ...prev, browserConfig: config, showBrowserConfigDialog: false }));
+          // Always save to localStorage as fallback
+          localStorage.setItem(BROWSER_CONFIG_KEY, JSON.stringify(config));
+
+          // Save to globals.json if a project is open
+          setState(prev => {
+            const newGlobalsFileContent: GlobalsFile = {
+              ...prev.globalsFileContent,
+              browserConfig: config,
+            };
+
+            // Persist to globals.json
+            if (globalsHandleRef.current) {
+              (async () => {
+                try {
+                  const writable = await globalsHandleRef.current!.createWritable();
+                  await writable.write(JSON.stringify(newGlobalsFileContent, null, 2));
+                  await writable.close();
+                } catch (error) {
+                  console.error('Failed to save browser config to globals.json:', error);
+                }
+              })();
+            } else if (prev.serverProjectDir) {
+              writeFileToServer('globals.json', newGlobalsFileContent);
+            }
+
+            return {
+              ...prev,
+              browserConfig: config,
+              globalsFileContent: newGlobalsFileContent,
+              showBrowserConfigDialog: false,
+            };
+          });
         }}
         onCancel={() => setState(prev => ({ ...prev, showBrowserConfigDialog: false }))}
       />

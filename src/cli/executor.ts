@@ -1,4 +1,4 @@
-import { chromium, Browser, Page, BrowserContext } from 'playwright';
+import { chromium, Browser, Page, BrowserContext, selectors } from 'playwright';
 import {
   TestFile,
   TestCase,
@@ -22,6 +22,12 @@ export interface ExecutorOptions {
   variables?: Record<string, unknown>;
   plugins?: Plugin[];
   procedures?: Record<string, ProcedureDefinition>;
+  testIdAttribute?: string;
+  locale?: string;
+  timezoneId?: string;
+  geolocation?: { latitude: number; longitude: number };
+  viewport?: { width: number; height: number };
+  localStorage?: { name: string; value: string }[];
 }
 
 export class TestExecutor {
@@ -55,13 +61,40 @@ export class TestExecutor {
   }
 
   async initialize(): Promise<void> {
+    if (this.options.testIdAttribute) {
+      selectors.setTestIdAttribute(this.options.testIdAttribute);
+    }
+
     this.browser = await chromium.launch({
       headless: this.options.headless,
     });
-    // Use consistent viewport size for headless and headed modes
-    this.browserContext = await this.browser.newContext({
-      viewport: { width: 1920, height: 1080 },
-    });
+
+    const contextOptions: Record<string, unknown> = {
+      viewport: this.options.viewport || { width: 1920, height: 1080 },
+    };
+
+    if (this.options.locale) {
+      contextOptions.locale = this.options.locale;
+    }
+    if (this.options.timezoneId) {
+      contextOptions.timezoneId = this.options.timezoneId;
+    }
+    if (this.options.geolocation) {
+      contextOptions.geolocation = this.options.geolocation;
+      contextOptions.permissions = ['geolocation'];
+    }
+
+    this.browserContext = await this.browser.newContext(contextOptions);
+
+    if (this.options.localStorage && this.options.localStorage.length > 0) {
+      const items = this.options.localStorage;
+      await this.browserContext.addInitScript((storageItems: { name: string; value: string }[]) => {
+        for (const item of storageItems) {
+          localStorage.setItem(item.name, item.value);
+        }
+      }, items);
+    }
+
     this.page = await this.browserContext.newPage();
 
     if (this.options.timeout) {
