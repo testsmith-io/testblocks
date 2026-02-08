@@ -414,6 +414,26 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
   });
 
   // OpenAPI import endpoints
+  // Map parsed spec to client format (strips schemas to avoid circular reference issues)
+  function toClientSpec(spec: import('./openApiParser').ParsedSpec) {
+    return {
+      info: spec.info,
+      servers: spec.servers,
+      tags: spec.tags,
+      endpoints: spec.endpoints.map(e => ({
+        operationId: e.operationId,
+        method: e.method,
+        path: e.path,
+        summary: e.summary,
+        description: e.description,
+        tags: e.tags,
+        deprecated: e.deprecated,
+        hasRequestBody: !!e.requestBody,
+        responses: e.responses.map(r => r.statusCode),
+      })),
+    };
+  }
+
   app.post('/api/openapi/parse', async (req, res) => {
     try {
       const { url } = req.body as { url: string };
@@ -421,7 +441,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         return res.status(400).json({ error: 'URL is required' });
       }
       const spec = await parseOpenApiSpec(url, true);
-      res.json(spec);
+      res.json(toClientSpec(spec));
     } catch (error) {
       res.status(500).json({ error: 'Failed to parse spec', message: (error as Error).message });
     }
@@ -434,7 +454,7 @@ export async function startServer(options: ServerOptions = {}): Promise<void> {
         return res.status(400).json({ error: 'Content is required' });
       }
       const spec = await parseOpenApiSpec(content, false);
-      res.json(spec);
+      res.json(toClientSpec(spec));
     } catch (error) {
       res.status(500).json({ error: 'Failed to parse spec', message: (error as Error).message });
     }
