@@ -469,7 +469,7 @@ program
           'test:ci': 'testblocks run tests/**/*.testblocks.json -r console,html,junit -o reports',
         },
         devDependencies: {
-            '@testsmith/testblocks': '^0.9.6.1',
+            '@testsmith/testblocks': '^0.9.7',
         },
       };
       fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2));
